@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "workbench", "runtimeExecutable": "./start.sh", "runtimeArgs": [], "port": 8765},
+    {"name": "workbench-alt", "runtimeExecutable": "./start.sh", "runtimeArgs": [], "port": 8766, "env": {"WB_PORT": "8766"}}
+  ]
+}
