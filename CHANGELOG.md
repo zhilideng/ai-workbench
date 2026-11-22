@@ -5,6 +5,8 @@
 
 ## 未发布
 
+## v1.0.2 - 2026-11-22
+
 ### 新增
 - 每个版本 Tag 都附带更新说明：Tag 说明、GitHub Release 与本文件三处一致
 - `scripts/release.sh` 从本文件「未发布」段落生成版本说明，内容为空时拒绝发布；`--push` 时同时创建 GitHub Release
