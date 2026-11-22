@@ -1,0 +1,83 @@
+/* 设计令牌（明暗两套配色）、基础样式、状态信号灯 */
+/* ==========================================================================
+   设计：调度台
+   · 界面本身是安静的石墨灰；颜色只用来表示任务状态（信号灯）
+   · 看板列头连成一条流水线：待办 → 执行中 → 待验收 → 已完成，失败 / 取消在旁路
+   · 主要操作用墨色；卡片上的动作在悬停时预示卡片会去往哪一列
+   ========================================================================== */
+:root{
+  --bg:#F4F5F7; --side:#ECEEF1; --panel:#FFFFFF; --field:#FFFFFF; --sunk:#EEF0F3; --bubble:#EBEDF1;
+  --hover:rgba(28,32,38,.055); --press:rgba(28,32,38,.09);
+  --line:#E2E5EA; --line-2:#E7E9ED; --line-3:#EEF0F3; --line-strong:#D2D7DE; --dash:#CDD2D9; --rail:#CBD0D8;
+  --ink:#1C2026; --on-ink:#FFFFFF;
+  --text:#1C2026; --text-2:#30353D; --text-3:#555C66; --muted:#7A818B; --faint:#A0A6AF;
+  --idle:#A0A6AF;
+  --run:#2F6FEB; --run-track:rgba(47,111,235,.2); --run-soft:#EAF1FE; --run-ink:#1F57C8;
+  --review:#E58A00; --review-soft:#FDF3E2; --review-ink:#975A00; --review-halo:rgba(229,138,0,.2);
+  --done:#1F9D5C; --done-soft:#E6F5ED; --done-ink:#157548;
+  --fail:#E5484D; --fail-soft:#FDEDED; --fail-ink:#C1363C;
+  --focus:#2F6FEB; --focus-ring:rgba(47,111,235,.2); --ring:rgba(28,32,38,.07);
+  --code:#1C2026; --code-ink:#E6E8EB;
+  --sh-card:0 1px 2px rgba(20,24,31,.05);
+  --sh-lift:0 10px 22px -10px rgba(20,24,31,.2),0 1px 2px rgba(20,24,31,.05);
+  --sh-dock:0 16px 40px -18px rgba(20,24,31,.28),0 2px 6px -2px rgba(20,24,31,.06);
+  --sh-pop:0 22px 50px -14px rgba(20,24,31,.28),0 2px 6px rgba(20,24,31,.06);
+  --sans:'IBM Plex Sans','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --gut:20px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#131519; --side:#0E1013; --panel:#1B1E23; --field:#1B1E23; --sunk:#23272D; --bubble:#262A31;
+  --hover:rgba(236,238,241,.06); --press:rgba(236,238,241,.1);
+  --line:#2A2E35; --line-2:#262A30; --line-3:#22262B; --line-strong:#3A3F48; --dash:#3A3F48; --rail:#3A3F48;
+  --ink:#ECEEF1; --on-ink:#16181C;
+  --text:#ECEEF1; --text-2:#D3D7DD; --text-3:#A3A9B2; --muted:#7E858F; --faint:#60666F;
+  --idle:#6A707A;
+  --run:#5B93FF; --run-track:rgba(91,147,255,.25); --run-soft:#172540; --run-ink:#A3C3FF;
+  --review:#F5A524; --review-soft:#2D2414; --review-ink:#FFCF7D; --review-halo:rgba(245,165,36,.22);
+  --done:#3DBE78; --done-soft:#142B1F; --done-ink:#93E2B6;
+  --fail:#FF6369; --fail-soft:#311A1C; --fail-ink:#FFA3A6;
+  --focus:#5B93FF; --focus-ring:rgba(91,147,255,.3); --ring:rgba(236,238,241,.08);
+  --code:#0E1013; --code-ink:#D9DCE1;
+  --sh-card:0 1px 2px rgba(0,0,0,.35);
+  --sh-lift:0 12px 26px -12px rgba(0,0,0,.75),0 1px 2px rgba(0,0,0,.4);
+  --sh-dock:0 18px 44px -16px rgba(0,0,0,.75),0 2px 6px rgba(0,0,0,.3);
+  --sh-pop:0 22px 54px -12px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.04);
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,textarea,select{font:inherit;color:inherit}
+textarea::placeholder,input::placeholder{color:var(--faint)}
+a{color:var(--run-ink);text-underline-offset:2px}a:hover{color:var(--run)}
+::selection{background:var(--focus-ring)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.mono{font-family:var(--mono)}
+.spacer{flex:1}
+.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.kbd{font-size:10.5px;font-weight:500;color:var(--muted);background:var(--sunk);border-radius:5px;padding:0 5px;line-height:18px;flex:none}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--dash);border-radius:6px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background-color:var(--faint)}
+::-webkit-scrollbar-track{background:transparent}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{50%{opacity:.3}}
+
+.app{display:grid;grid-template-columns:268px minmax(0,1fr);height:100vh}
+
+/* ---------- 状态信号灯：侧边栏、看板列头、列表、任务页共用 ---------- */
+.sti{position:relative;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;color:#fff}
+.sti.todo{box-shadow:inset 0 0 0 1.5px var(--idle)}
+.sti.run{border:1.75px solid var(--run-track);border-top-color:var(--run);animation:spin .9s linear infinite}
+.sti.run.idle{animation:none;border-color:var(--run)}
+.sti.review::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--review);box-shadow:0 0 0 3px var(--review-halo)}
+.sti.review.idle::before{box-shadow:none}
+.sti.done{background:var(--done)}
+.sti.fail{background:var(--fail)}
+.sti.cancel{background:var(--idle)}
+.stx{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2);white-space:nowrap}

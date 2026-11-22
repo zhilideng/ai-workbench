@@ -1,0 +1,35 @@
+/* 底部输入框（调度台） */
+/* ---------- 输入框（底部调度台） ---------- */
+.composer-wrap{padding:12px 24px 18px;display:flex;flex-direction:column;flex:none}
+.composer{width:100%;max-width:860px;align-self:center;background:var(--panel);border-radius:18px;box-shadow:0 0 0 1px var(--line),var(--sh-dock);padding:12px 12px 10px;display:flex;flex-direction:column;gap:8px;transition:box-shadow .15s;flex:none}
+.composer:focus-within{box-shadow:0 0 0 1px var(--line-strong),0 0 0 5px var(--ring),var(--sh-dock)}
+.composer textarea{border:none;outline:none;resize:none;background:transparent;font-size:14.5px;line-height:1.6;padding:4px 6px;min-height:54px;max-height:40vh;display:block;width:100%;color:var(--text)}
+.composer textarea:disabled{opacity:.6;cursor:not-allowed}
+.composer.reply textarea{min-height:26px}
+.composer.dropping{box-shadow:0 0 0 1.5px var(--run),0 0 0 5px var(--run-soft),var(--sh-dock)}
+.atts{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px}
+.att{position:relative;width:56px;height:56px;border-radius:10px;box-shadow:0 0 0 1px var(--line);overflow:hidden;background:var(--sunk)}
+.att img{width:100%;height:100%;object-fit:cover;display:block}
+.att.busy img{opacity:.45}
+.att.busy::after{content:'';position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;border:2px solid var(--run);border-right-color:transparent;animation:spin .8s linear infinite}
+.att-x{position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;display:flex;align-items:center;justify-content:center}
+.bubble-imgs{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-bottom:6px}
+.bubble-imgs img{width:112px;height:112px;object-fit:cover;border-radius:12px;box-shadow:0 0 0 1px var(--line);cursor:zoom-in;background:#fff}
+.cbar{display:flex;align-items:center;gap:4px;min-width:0}
+.cgrp{display:flex;flex-wrap:wrap;align-items:center;gap:2px;min-width:0;flex:1}
+.ctl{position:relative;height:30px;padding:0 7px 0 9px;border-radius:8px;border:0;background:transparent;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-3);transition:background .12s,color .12s}
+.ctl:hover,.ctl:focus-within{background:var(--hover);color:var(--text)}
+.ctl select{appearance:none;-webkit-appearance:none;border:none;outline:none;background:transparent;font-size:12.5px;color:inherit;padding:0 15px 0 0;cursor:pointer;max-width:180px;text-overflow:ellipsis;field-sizing:content}
+.ctl select option{color:var(--text);background:var(--panel)}
+.ctl .chev{position:absolute;right:6px;pointer-events:none;opacity:.55}
+.att-btn{padding:0;width:30px;justify-content:center}
+.toggle{height:30px;padding:0 10px;border-radius:8px;border:0;background:transparent;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-3);transition:background .12s,color .12s}
+.toggle:hover{background:var(--hover);color:var(--text)}
+.toggle.on{background:var(--ink);color:var(--on-ink)}
+.vsep{width:1px;height:16px;background:var(--line);margin:0 6px;flex:none}
+.csend{margin-left:auto;display:flex;align-items:center;gap:2px;flex:none}
+.csend .hint{font-size:12px;color:var(--muted);margin-right:6px;white-space:nowrap}
+.send{width:34px;height:34px;border-radius:11px;border:none;background:var(--ink);color:var(--on-ink);display:flex;align-items:center;justify-content:center;margin-left:6px;flex:none;transition:opacity .12s,transform .1s}
+.send:hover{opacity:.86}.send:active{transform:scale(.95)}
+.send:disabled{background:var(--sunk);color:var(--faint);opacity:1}
+.send.stop{background:var(--ink);color:var(--on-ink)}

@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 工作台</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/board.css">
+<link rel="stylesheet" href="css/composer.css">
+<link rel="stylesheet" href="css/model-picker.css">
+<link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/responsive.css">
+<link rel="stylesheet" href="css/ssh.css">
+<link rel="stylesheet" href="css/preview.css">
+<link rel="stylesheet" href="css/motion.css">
+<!-- 第三方库随应用打包（离线可用），版本见 vendor/README.md -->
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+</head>
+<body>
+<!-- 界面模板（Vue 在 DOM 中编译）。逻辑在 js/：core 为基础工具，features 为各功能模块，components 为组件 -->
+<div id="app" class="app">
+  <div class="scrim" :class="{on:sideOpen}" @click="sideOpen=false"></div>
+  <!-- ============ 侧边栏：项目切换 + 任务列表 ============ -->
+  <aside aria-label="任务" :class="{open:sideOpen}">
+    <div class="side-top">
+      <div class="logo"><ic n="logo" :s="13"></ic></div>
+      <span class="brand-t">工作台</span>
+      <button class="ibtn" v-if="curProject" @click="openSsh" title="SSH 连接" aria-label="SSH 连接"><ic n="server" :s="15"></ic></button>
+      <button class="ibtn" @click="newTask" title="新任务（⌘N）" aria-label="新任务"><ic n="compose" :s="15"></ic></button>
+    </div>
+    <div class="psw" :class="{open:pswOpen}" ref="psw">
+      <button type="button" class="psw-btn" @click="togglePsw" :aria-expanded="pswOpen" aria-haspopup="listbox" title="切换项目（⌘K）">
+        <span v-if="cur" class="ini">{{ cur.charAt(0) }}</span><span v-else class="ini all"><ic n="grid" :s="12"></ic></span>
+        <span class="name">{{ cur || '全部项目' }}</span>
+        <span v-if="cur ? countRunning(cur) : runningCount" class="count run">{{ cur ? countRunning(cur) : runningCount }}</span>
+        <span class="kbd">⌘K</span><ic class="chev" n="chevd" :s="13"></ic>
+      </button>
+      <div class="psw-pop" v-if="pswOpen" role="listbox" aria-label="项目">
+        <input ref="projSearch" type="search" v-model="pq" placeholder="搜索项目" aria-label="搜索项目" @keydown.enter="pickFirstProject" @keydown.esc.stop="pswOpen=false">
+        <div class="psw-list">
+          <button type="button" class="pitem" :class="{active:cur===''}" @click="pick('')" v-if="!pq">
+            <span class="ini all"><ic n="grid" :s="12"></ic></span><span class="name">全部项目</span>
+            <span class="count" :class="{run:runningCount}">{{ runningCount || openCountAll }}</span></button>
+          <button type="button" v-for="p in visibleProjects" :key="p.name" class="pitem" :class="{active:cur===p.name}" @click="pick(p.name)" :title="p.path">
+            <span class="ini">{{ p.name.charAt(0) }}</span><span class="name">{{ p.name }}</span>
+            <span v-if="countRunning(p.name)" class="count run">{{ countRunning(p.name) }}</span>
+            <span v-else-if="countOpen(p.name)" class="count">{{ countOpen(p.name) }}</span></button>
+          <div v-if="!visibleProjects.length" class="side-empty">{{ cfg.projects_root ? '没有匹配的项目' : '还没有设置项目目录' }}</div>
+        </div>
+        <button type="button" class="pitem psw-root" @click="pswOpen=false; chooseProjectsRoot()" :title="cfg.projects_root ? '项目目录：'+cfg.projects_root : '选择项目目录'">
+          <span class="ini all"><ic n="folder" :s="12"></ic></span>
+          <span class="name">{{ cfg.projects_root ? shortPath(cfg.projects_root) : '选择项目目录…' }}</span><span class="kbd">更改</span></button>
+      </div>
+    </div>
+    <label class="side-search"><ic n="search" :s="13"></ic>
+      <input type="search" v-model="tq" aria-label="搜索任务" placeholder="搜索任务"></label>
+
+    <nav class="threads" aria-label="任务列表">
+      <div v-for="g in sideGroups" :key="g.key" class="tgrp" :class="{closed:sideClosed[g.key]}">
+        <button type="button" class="tgrp-h" @click="toggleGroup(g.key)" :aria-expanded="!sideClosed[g.key]">{{ g.label }}<span class="n">{{ g.items.length }}</span><ic class="chev" n="chevd" :s="12"></ic></button>
+        <template v-if="!sideClosed[g.key]">
+          <button type="button" v-for="t in g.items.slice(0, g.limit)" :key="t.id" class="titem" :class="{on:sel && sel.id===t.id}" @click="openTask(t.id)">
+            <sg :s="t.status" :label="statusLabel[t.status]"></sg>
+            <span class="ti-main">
+              <span class="ti-row"><span class="ti-title">{{ t.title }}</span><span class="ti-time">{{ agoShort(t.updated_at) }}</span></span>
+              <span class="ti-sub">
+                <span v-if="!cur"><span class="ini">{{ t.project.charAt(0) }}</span><span class="ell">{{ t.project }}</span></span>
+                <span v-else><ic :n="t.engine==='codex'?'terminal':'spark'" :s="11"></ic>{{ engLabel(t.engine) }}</span>
+                <span v-if="t.ssh_id"><ic n="server" :s="11"></ic><span class="ell">{{ t.ssh_name }}</span></span>
+                <span v-else-if="t.branch"><ic n="branch" :s="11"></ic><span class="ell mono">{{ t.branch }}</span></span>
+                <span v-else class="ti-id">#{{ t.id }}</span>
+              </span>
+            </span>
+          </button>
+          <button v-if="g.items.length > g.limit" type="button" class="side-more" @click="sideLimit[g.key]=(sideLimit[g.key]||g.limit)+30">显示更多（{{ g.items.length - g.limit }}）</button>
+        </template>
+      </div>
+      <div v-if="!sideGroups.length" class="side-empty">{{ tq ? '没有匹配的任务' : (cur ? '这个项目还没有任务' : '还没有任务') }}</div>
+    </nav>
+
+    <div class="side-foot">
+      <details class="quota" :open="quotaOpen" @toggle="quotaOpen=$event.target.open">
+        <summary><ic n="gauge" :s="13"></ic><b>额度</b>
+          <span class="qmini">
+            <span v-for="m in quotaMini" :key="m.k" :title="m.title">{{ m.name }} <i :class="barLevel(m.left)">{{ m.left }}%</i></span>
+          </span><ic class="chev" n="chevu" :s="12"></ic></summary>
+        <div class="quota-body">
+          <div class="quota-h"><button :class="{spin:quotaLoading}" @click="loadQuota(true)" :title="quota ? '更新于 '+fmtClock(quota.fetched_at) : '刷新'"><ic n="refresh" :s="12"></ic>{{ quota ? '更新于 '+fmtClock(quota.fetched_at) : '刷新' }}</button></div>
+          <div class="qcard" v-if="quota && quota.codex">
+            <div class="qhead"><ic n="terminal" :s="13"></ic>Codex
+              <span v-if="quota.codex.available" class="plan">{{ quota.codex.plan || '—' }}</span>
+              <span v-else class="plan off">不可用</span></div>
+            <template v-if="quota.codex.available">
+              <div v-if="!quota.codex.usage_allowed || quota.codex.spend_control_reached || quotaReached" class="qwarn">额度已用尽，暂时无法执行 Codex 任务</div>
+              <template v-for="g in quota.codex.groups" :key="g.id">
+                <div class="qwin" v-for="w in g.windows" :key="g.id+w.label">
+                  <div class="qrow"><span>{{ quota.codex.groups.length>1 ? g.name+' · ' : '' }}{{ w.label }}剩余</span><b>{{ left(w) }}%</b></div>
+                  <div class="bar" role="progressbar" :aria-valuenow="left(w)" aria-valuemin="0" aria-valuemax="100" :aria-label="w.label+'剩余额度'">
+                    <i :class="barLevel(left(w))" :style="{width:left(w)+'%'}"></i></div>
+                  <div class="qsub" v-if="w.resets_at" :title="fmtTime(w.resets_at)">{{ untilText(w.resets_at) }}后重置 · {{ fmtShort(w.resets_at) }}</div>
+                </div>
+              </template>
+              <div class="qmeta">
+                <span v-if="quota.codex.credits">积分 <b>{{ quota.codex.credits.unlimited ? '无限' : fmtNum(quota.codex.credits.balance) }}</b></span>
+                <span v-if="quota.codex.reset_credits && quota.codex.reset_credits.count" :title="'最早到期 '+fmtTime(quota.codex.reset_credits.expires_at)">免费重置 <b>{{ quota.codex.reset_credits.count }}</b> 次</span>
+                <span v-if="quota.codex.source==='log'" :title="'实时查询失败，显示 '+quota.codex.snapshot_at+' 的会话记录'">（缓存数据）</span>
+              </div>
+            </template>
+            <div v-else class="qsub qerr" :title="quota.codex.error">{{ prettyErr(quota.codex.error) || '无法读取额度' }}</div>
+          </div>
+          <div class="qcard" v-for="r in claudeRemote" :key="'cr'+r.id">
+            <div class="qhead"><ic n="spark" :s="13"></ic><span class="qname" :title="'服务器 '+r.target+'（'+r.project+' · '+r.name+'）上的 Claude Code'">Claude · {{ r.name }}</span>
+              <span v-if="!r.error" class="plan">{{ r.plan || '—' }}</span><span v-else class="plan off">不可用</span></div>
+            <template v-if="!r.error">
+              <div class="qwin" v-for="w in r.windows" :key="w.key">
+                <div class="qrow"><span>{{ w.label }}剩余</span><b>{{ left(w) }}%</b></div>
+                <div class="bar" role="progressbar" :aria-valuenow="left(w)" aria-valuemin="0" aria-valuemax="100" :aria-label="r.name+' '+w.label+'剩余额度'">
+                  <i :class="barLevel(left(w))" :style="{width:left(w)+'%'}"></i></div>
+                <div class="qsub" v-if="w.resets_at" :title="fmtTime(w.resets_at)">{{ untilText(w.resets_at) }}后重置 · {{ fmtShort(w.resets_at) }}</div>
+              </div>
+              <div class="qmeta"><span class="mono">{{ r.target }}</span>
+                <span v-if="r.extra">超额用量 <b>{{ r.extra.used ?? 0 }}{{ r.extra.limit ? ' / '+r.extra.limit : '' }}</b></span></div>
+            </template>
+            <div v-else class="qsub qerr" :title="r.error">{{ prettyErr(r.error) }}</div>
+          </div>
+          <div class="qcard" v-if="quota && !claudeRemote.length">
+            <div class="qhead" style="font-weight:500;color:var(--text-3)"><ic n="spark" :s="13"></ic>Claude Code<span class="qoff" title="执行过远程 Claude 任务的 SSH 服务器会显示在这里">本机暂未接入</span></div>
+          </div>
+          <div class="qcard" v-if="!quota"><div class="qsub">{{ quotaLoading ? '正在读取额度…' : '额度读取失败' }}</div></div>
+        </div>
+      </details>
+    </div>
+  </aside>
+
+  <!-- ============ 主区域 ============ -->
+  <main>
+    <!-- ---- 看板 / 列表 ---- -->
+    <template v-if="!sel">
+      <header class="topbar">
+        <button class="ibtn only-m" @click="sideOpen=true" aria-label="打开侧边栏"><ic n="menu" :s="16"></ic></button>
+        <div class="crumb">
+          <span class="cur">{{ cur || '全部项目' }}</span>
+          <span class="meta chips" v-if="curProject">
+            <span class="chip mono" :title="curProject.path"><ic n="folder" :s="12"></ic>{{ shortPath(curProject.path) }}</span>
+            <span class="chip mono" v-if="curProject.is_git"><ic n="branch" :s="12"></ic>{{ curProject.branch }}</span>
+            <span class="chip" v-else>非 git 仓库</span>
+            <span class="chip warn" v-if="curProject.dirty"><span class="dot"></span>{{ curProject.dirty }} 个未提交改动</span>
+            <span class="chip" v-if="curProject.has_claude_md"><ic n="check" :s="11"></ic>CLAUDE.md</span>
+          </span>
+          <span class="meta chips" v-else>
+            <span class="chip">{{ projects.length }} 个项目</span>
+            <span class="chip info" v-if="runningCount"><span class="dot"></span>{{ runningCount }} 个任务运行中</span>
+            <span class="chip">并发上限 {{ cfg.max_concurrent }}</span>
+          </span>
+        </div>
+        <div class="actions">
+          <button v-if="curProject" class="btn ghost hide-m" @click="openSsh" title="管理本项目的 SSH 远程连接"><ic n="server" :s="14"></ic>SSH<span v-if="curProject.ssh_count" class="count">{{ curProject.ssh_count }}</span></button>
+          <div class="seg" role="group" aria-label="视图">
+            <button :class="{on:view==='board'}" :aria-pressed="view==='board'" @click="view='board'" title="看板"><ic n="board" :s="13"></ic><span class="hide-m">看板</span></button>
+            <button :class="{on:view==='list'}" :aria-pressed="view==='list'" @click="view='list'" title="列表"><ic n="list" :s="13"></ic><span class="hide-m">列表</span></button>
+          </div>
+        </div>
+      </header>
+
+      <div class="content">
+      <div class="board-wrap kanban" v-if="view==='board'">
+        <div class="board">
+          <section class="col" v-for="c in columns" :key="c.key" :aria-label="c.label" :class="{drop:dropCol===c.key, can:dragTask && dropCol!==c.key && !!dropTarget(dragTask,c)}"
+            @dragover="onDragOver($event,c)" @dragleave="onDragLeave($event,c)" @drop.prevent="onDrop(c)">
+            <div class="col-h">
+              <sg :s="c.glyph" :idle="!colTasks(c).length"></sg><h2>{{ c.label }}</h2><span class="n">{{ colTasks(c).length }}</span>
+              <button v-if="c.key==='todo'" class="add" aria-label="新建任务" title="新建任务（⌘N）" @click="newTask"><ic n="plus" :s="13"></ic></button>
+              <span v-if="c.rail" class="rail" aria-hidden="true"></span>
+            </div>
+            <div class="col-body">
+            <article v-for="t in colVisible(c)" :key="t.id" class="card" :class="{dragging:dragId===t.id, live:t.status==='running'}" @click="openTask(t.id)" tabindex="0" @keydown.enter="openTask(t.id)"
+              :draggable="!isActive(t)" @dragstart="onDragStart($event,t)" @dragend="dragId=null;dropCol=''">
+              <div class="card-top">
+                <span class="eng"><ic :n="t.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(t.engine) }}</span>
+                <span class="tid">#{{ t.id }}</span><span class="time">{{ ago(t.updated_at) }}</span>
+                <button v-if="!isActive(t)" type="button" class="card-del" @click.stop="delTask(t)" @keydown.enter.stop aria-label="删除任务" title="删除任务"><ic n="trash" :s="13"></ic></button>
+              </div>
+              <h3>{{ t.title }}</h3>
+              <div class="card-foot" v-if="t.status!=='done' || !cur || t.ssh_id || t.branch">
+                <span class="cf-l">
+                  <span v-if="t.status==='failed'" class="cstate fail">失败</span>
+                  <span v-else-if="t.status==='cancelled'" class="cstate cancel">已取消</span>
+                  <span v-else-if="isActive(t)" class="cstate run"><span class="dot"></span>{{ statusLabel[t.status] }}</span>
+                  <span v-if="!cur" class="ctx proj" :title="t.project"><ic n="folder" :s="12"></ic><span class="ell">{{ t.project }}</span></span>
+                  <span v-if="t.ssh_id" class="ctx" :title="'在服务器 '+t.ssh_name+' 上执行'"><ic n="server" :s="12"></ic><span class="ell">{{ t.ssh_name }}</span></span>
+                  <span v-else-if="t.branch" class="ctx" :title="'worktree 分支 '+t.branch"><ic n="branch" :s="12"></ic><span class="ell mono">{{ t.branch }}</span></span>
+                </span>
+                <button v-if="t.status==='review'" class="btn sm to-done" @click.stop="quickPatch(t,{status:'done'})" title="验收通过，移到「已完成」"><ic n="check" :s="12" :w="2.4"></ic>通过</button>
+                <button v-else-if="t.status==='todo'" class="btn sm to-run" @click.stop="quickRun(t)" title="开始执行"><ic n="play" :s="10"></ic>执行</button>
+                <button v-else-if="isActive(t)" class="btn sm danger" @click.stop="quickCancel(t)" title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
+                <button v-else-if="t.status==='failed'||t.status==='cancelled'" class="btn sm to-run" @click.stop="quickRun(t)" title="重新执行"><ic n="retry" :s="12"></ic>重试</button>
+              </div>
+            </article>
+            <div v-if="!colTasks(c).length" class="empty">
+              <b>{{ c.empty }}</b><span v-if="c.emptyHint">{{ c.emptyHint }}</span>
+            </div>
+            <button v-if="colTasks(c).length > colLimit(c)" class="more" @click="showMore(c)">
+              <ic n="chevd" :s="12"></ic>显示更多（还有 {{ colTasks(c).length - colLimit(c) }} 条）</button>
+            <button v-else-if="colLimit(c) > PAGE" class="more" @click="collapse(c)">收起</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="board-wrap" v-else>
+        <div class="list">
+          <table>
+            <thead><tr><th style="width:64px">#</th><th>任务</th><th v-if="!cur">项目</th><th>引擎</th><th>状态</th><th>更新</th><th style="width:40px"><span class="sr">操作</span></th></tr></thead>
+            <tbody>
+              <tr v-for="t in filteredTasks" :key="t.id" @click="openTask(t.id)">
+                <td class="tid">#{{ t.id }}</td>
+                <td><div class="t">{{ t.title }}</div></td>
+                <td v-if="!cur" style="color:var(--text-3)">{{ t.project }}</td>
+                <td><span class="eng"><ic :n="t.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(t.engine) }}</span>
+                  <span v-if="t.ssh_id" class="eng remote" style="margin-left:10px"><ic n="server" :s="12"></ic>{{ t.ssh_name }}</span></td>
+                <td><span class="stx"><sg :s="t.status"></sg>{{ statusLabel[t.status] }}</span></td>
+                <td style="color:var(--muted);white-space:nowrap">{{ ago(t.updated_at) }}</td>
+                <td><button type="button" class="row-del" @click.stop="delTask(t)" :disabled="isActive(t)" :title="isActive(t)?'执行中，先停止':'删除任务'" aria-label="删除任务"><ic n="trash" :s="13"></ic></button></td>
+              </tr>
+              <tr v-if="!filteredTasks.length"><td :colspan="cur?6:7" style="text-align:center;color:var(--muted);padding:32px">暂无任务</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+    </template>
+
+    <!-- ---- 会话 ---- -->
+    <template v-else>
+      <header class="topbar">
+        <button class="ibtn only-m" @click="sideOpen=true" aria-label="打开侧边栏"><ic n="menu" :s="16"></ic></button>
+        <button class="ibtn" @click="closeTask" title="返回（Esc）" aria-label="返回"><ic n="back" :s="15"></ic></button>
+        <div class="crumb">
+          <button class="cb hide-m" @click="pick(sel.project)" :title="sel.project">{{ sel.project }}</button><span class="sep hide-m">/</span>
+          <span class="cur" :title="sel.title">{{ sel.title }}</span>
+          <span class="stx" style="flex:none;margin-left:4px"><sg :s="sel.status"></sg>{{ statusLabel[sel.status] }}</span>
+        </div>
+        <div class="actions">
+          <button v-if="sel.status==='review'" class="btn primary" @click="patch({status:'done'})"><ic n="check" :s="13"></ic>验收通过</button>
+          <button class="btn ghost hide-m" v-if="sel.resume_cmd" @click="copy(sel.resume_cmd,'resume')" title="复制命令，在终端里接着干"><ic n="terminal" :s="14"></ic>{{ copied==='resume' ? '已复制' : '终端接管' }}</button>
+          <button class="ibtn" :class="{on:showInfo}" @click="showInfo=!showInfo" aria-label="任务详情" title="任务详情"><ic n="info" :s="15"></ic></button>
+          <button class="ibtn" @click="del" :disabled="isActive(sel)" aria-label="删除任务" title="删除任务"><ic n="trash" :s="15"></ic></button>
+        </div>
+      </header>
+      <div class="task-info" v-if="showInfo">
+        <span class="k">创建于</span><span>{{ fmtTime(sel.created_at) }}</span>
+        <span class="k">状态</span><span><select v-model="sel.status" @change="patch({status:sel.status})" :disabled="isActive(sel)">
+          <option v-for="(v,k) in statusLabel" :value="k" :key="k">{{ v }}</option></select></span>
+        <span class="k">权限模式</span><span><select v-model="sel.permission_mode" @change="patch({permission_mode:sel.permission_mode})">
+          <option v-for="m in modesFor(sel.engine)" :value="m.v" :key="m.v">{{ m.l }}</option></select></span>
+        <span class="k">工作目录</span><span class="mono" style="font-size:12px;word-break:break-all">{{ sel.ssh_id ? (sel.ssh_name+':'+(sel.workdir||'~')) : (sel.workdir || '（首次执行时确定）') }}</span>
+        <span class="k" v-if="sel.resume_cmd">接管命令</span><span v-if="sel.resume_cmd" class="mono" style="font-size:12px;word-break:break-all">{{ sel.resume_cmd }}</span>
+      </div>
+
+      <div class="chat" ref="logBox" @click="openPreview">
+        <div class="thread">
+          <div class="meta-row chips">
+            <span class="chip"><ic :n="sel.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(sel.engine) }}<template v-if="sel.model"> · {{ sel.model }}</template></span>
+            <span class="chip remote" v-if="sel.ssh_id" :title="'在服务器 '+(sel.ssh_target||'')+' 上执行，工作目录 '+(sel.workdir||'~')">
+              <span class="sdot" :class="{on:sel.ssh_connected, busy:ssh.act[sel.ssh_id]}"></span><ic n="server" :s="12"></ic>{{ sel.ssh_name }}<span class="mono" style="opacity:.75" v-if="sel.ssh_target">{{ sel.ssh_target }}</span>
+              <button v-if="sel.ssh_connected" type="button" class="chip-btn" @click="disconnectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '断开中…' : '断开' }}</button>
+              <button v-else-if="sel.ssh_target" type="button" class="chip-btn" @click="connectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '连接中…' : '连接' }}</button></span>
+            <span class="chip" v-if="sel.effort"><ic n="brain" :s="12"></ic>思考 {{ effortLabel(sel.effort, sel.engine) }}</span>
+            <span class="chip"><ic n="shield" :s="12"></ic>{{ modeOf(sel.engine, sel.permission_mode).s }}</span>
+            <span class="chip mono" v-if="sel.branch"><ic n="branch" :s="12"></ic>{{ sel.branch }}</span>
+            <span class="chip" v-if="sel.total_cost">${{ sel.total_cost.toFixed(4) }}</span>
+          </div>
+          <template v-if="!sel.runs.length">
+            <div class="msg-user">
+              <div v-if="editing && editing.run===0" class="edit-box">
+                <textarea ref="editInput" v-model="editing.text" rows="3" aria-label="编辑任务描述" @input="grow" @keydown.enter="onEnter($event,saveEdit)"></textarea>
+                <div class="edit-bar"><span class="note">只修改任务描述，不会执行</span>
+                  <button type="button" class="btn sm" @click="editing=null">取消</button>
+                  <button type="button" class="btn sm primary" @click="saveEdit" :disabled="!editing.text.trim()">保存</button></div>
+              </div>
+              <div v-else class="user-wrap">
+                <div class="bubble-imgs" v-if="(sel.image_urls||[]).length"><img v-for="u in sel.image_urls" :key="u" :src="u" alt="附图"></div>
+                <div class="bubble">{{ sel.description }}</div>
+                <div class="msg-acts">
+                  <button type="button" class="mbtn" @click="copy(sel.description,'desc')" :title="copied==='desc'?'已复制':'复制'" aria-label="复制"><ic :n="copied==='desc'?'check':'copy'" :s="13"></ic></button>
+                  <button type="button" class="mbtn" @click="startEdit(0,sel.description)" title="编辑" aria-label="编辑"><ic n="edit" :s="13"></ic></button>
+                </div></div>
+            </div>
+            <div class="pending-note">尚未执行 · 按 ↵ 或点击发送开始</div>
+          </template>
+          <template v-for="r in sel.runs" :key="r.id">
+            <template v-for="v in [runView(r)]" :key="'v'+r.id">
+              <div v-if="v.prompt" class="msg-user">
+                <div v-if="editing && editing.run===r.id" class="edit-box">
+                  <textarea ref="editInput" v-model="editing.text" rows="3" aria-label="编辑消息" @input="grow" @keydown.enter="onEnter($event,saveEdit)"></textarea>
+                  <div class="edit-bar"><span class="note">回到这条消息之前，用新内容重新发送；之后的对话会被替换</span>
+                    <button type="button" class="btn sm" @click="editing=null">取消</button>
+                    <button type="button" class="btn sm primary" @click="saveEdit" :disabled="!editing.text.trim() || editing.busy">发送</button></div>
+                </div>
+                <div v-else class="user-wrap">
+                  <div class="bubble-imgs" v-if="(v.prompt.images||[]).length"><img v-for="u in v.prompt.images" :key="u" :src="u" alt="附图"></div>
+                  <div class="bubble">{{ v.prompt.text }}</div>
+                  <div class="msg-acts">
+                    <span class="meta" v-if="v.prompt.meta">{{ v.prompt.meta }}</span>
+                    <button type="button" class="mbtn" @click="copy(v.prompt.text,'u'+r.id)" :title="copied==='u'+r.id?'已复制':'复制'" aria-label="复制消息"><ic :n="copied==='u'+r.id?'check':'copy'" :s="13"></ic></button>
+                    <button type="button" class="mbtn" @click="startEdit(r.id,v.prompt.text)" :disabled="isActive(sel)" title="编辑并重新发送" aria-label="编辑消息"><ic n="edit" :s="13"></ic></button>
+                  </div></div>
+              </div>
+              <div v-if="v.work.length" class="work" :class="{open:workOpen(r)}">
+                <button type="button" class="work-h" @click="toggleWork(r)" :aria-expanded="workOpen(r)">
+                  <span v-if="r.status==='running'" class="spin"></span>
+                  <span>{{ r.status==='running' ? '正在工作' : '已工作' + (r.ended_at ? ' '+dur(r.ended_at-r.started_at) : '') }}</span>
+                  <span v-if="v.tools">· {{ v.tools }} 个操作</span><ic class="chev" n="chevr" :s="12"></ic>
+                </button>
+                <div class="work-body" v-if="workOpen(r)">
+                  <template v-for="(e,j) in v.work" :key="j">
+                    <details v-if="e.cls==='tool'" class="tool" :class="{err:e.isErr}">
+                      <summary><span class="tname"><ic :n="toolIcon(e.name)" :s="12"></ic>{{ e.name }}</span><span class="tsum">{{ e.summary }}</span><ic class="chev" n="chevd" :s="12"></ic></summary>
+                      <pre v-if="e.output">{{ e.output.slice(0,8000) }}</pre><div v-else class="note">（无输出）</div>
+                    </details>
+                    <div v-else-if="e.cls==='text'" class="ai-text" v-html="md(e.text)"></div>
+                    <div v-else class="note">{{ e.text }}</div>
+                  </template>
+                </div>
+              </div>
+              <div v-for="(e,j) in v.notes" :key="'n'+j" class="note err">{{ e.text }}</div>
+              <div v-for="(e,j) in v.final" :key="'f'+j" class="ai-msg">
+                <div class="ai-text" v-html="md(e.text)"></div>
+                <div class="msg-acts"><button type="button" class="mbtn" @click="copy(e.text,'a'+r.id+'-'+j)" :title="copied==='a'+r.id+'-'+j?'已复制':'复制'" aria-label="复制回复"><ic :n="copied==='a'+r.id+'-'+j?'check':'copy'" :s="13"></ic></button></div>
+              </div>
+              <div v-if="r.status==='running'" class="thinking" v-show="!v.work.length"><i></i><i></i><i></i>&nbsp;{{ sel.status==='queued' ? '排队中' : '正在执行' }}</div>
+              <div v-else-if="r.status!=='running'" class="run-foot">
+                <span class="status" :class="runStatusClass(r.status)"><span class="dot"></span>{{ runLabel[r.status]||r.status }}</span>
+                <span v-if="r.ended_at">{{ dur(r.ended_at-r.started_at) }}</span>
+                <span v-if="r.cost">· ${{ r.cost.toFixed(4) }}</span>
+                <span v-if="runTokens(r.id)">· {{ runTokens(r.id) }}</span>
+              </div>
+            </template>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- ---- 输入框 ---- -->
+    <div class="composer-wrap">
+    <form class="composer" v-if="!sel" @submit.prevent="submit(true)" :class="{dropping:fileOver==='draft'}"
+      @dragover="onFileOver($event,'draft')" @dragleave="fileOver=''" @drop="onFileDrop($event,draftImgs)">
+      <label><span class="sr">任务描述</span>
+        <textarea ref="promptInput" v-model="draft.prompt" rows="2" @input="grow" @paste="onPaste($event,draftImgs)" @keydown.enter="onEnter($event,()=>submit(true))"
+          :disabled="!cur" :placeholder="!cur ? '先在左上角选择一个项目，再描述要做的事…' : draft.ssh_id>0 ? `让服务器 ${(selSsh||{}).name||''} 上的 ${engLabel(draft.engine)} 做点什么…` : `让 ${engLabel(draft.engine)} 在 ${cur} 里做点什么…`"></textarea></label>
+      <div class="atts" v-if="draftImgs.length">
+        <div class="att" v-for="(a,i) in draftImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
+          <button type="button" class="att-x" @click="removeAtt(draftImgs,i)" :aria-label="'移除图片 '+a.name"><ic n="x" :s="10" :w="2.6"></ic></button></div>
+      </div>
+      <div class="cbar">
+        <div class="cgrp">
+          <button type="button" class="ctl att-btn" @click="$refs.draftFile.click()" :disabled="!cur" title="添加图片（也可粘贴或拖入）" aria-label="添加图片"><ic n="paperclip" :s="15"></ic></button>
+          <input ref="draftFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden @change="addFiles(draftImgs,$event.target.files);$event.target.value=''">
+          <label class="ctl" title="引擎"><ic :n="draft.engine==='codex'?'terminal':'spark'" :s="13"></ic><span class="sr">引擎</span>
+            <select v-model="draft.engine">
+              <option value="claude" :disabled="cfg.engines && !cfg.engines.claude">Claude Code</option>
+              <option value="codex" :disabled="cfg.engines && !cfg.engines.codex">Codex</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
+          <label class="ctl" :title="draft.ssh_id>0 ? '在服务器上执行：ssh 到该连接的远程目录，用服务器上的 '+engLabel(draft.engine)+' CLI 干活' : '执行位置：本机'"><ic :n="draft.ssh_id>0?'server':'laptop'" :s="13"></ic><span class="sr">执行位置</span>
+            <select v-model.number="draft.ssh_id"><option :value="0">本机</option>
+              <option v-for="c in projSsh" :key="c.id" :value="c.id">{{ sshLabel(c) }}</option>
+              <option :value="-1">管理 SSH 连接…</option></select><ic class="chev" n="chevd" :s="11"></ic>
+            <span v-if="selSsh" class="sdot" :class="{on:selSsh.connected, busy:ssh.act[selSsh.id]}" :title="selSsh.connected?'已连接':'未连接（发送任务时自动连接）'"></span></label>
+          <button v-if="selSsh && selSsh.connected" type="button" class="loc-disc" @click="disconnectSsh(selSsh, cur)" :disabled="!!ssh.act[selSsh.id]" title="断开与这台服务器的连接">{{ ssh.act[selSsh.id] ? '断开中…' : '断开' }}</button>
+          <label class="ctl" :title="modeOf(draft.engine, draft.permission_mode).d"><ic n="shield" :s="13"></ic><span class="sr">权限</span>
+            <select v-model="draft.permission_mode"><option v-for="m in modesFor(draft.engine)" :value="m.v" :key="m.v">{{ m.s }}</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
+          <button type="button" v-if="curProject && curProject.is_git && !(draft.ssh_id>0)" class="toggle" :class="{on:draft.use_worktree}" :aria-pressed="draft.use_worktree"
+            @click="draft.use_worktree=!draft.use_worktree" title="在独立 git worktree（分支 wb/task-N）中执行，可并行、不影响主工作区"><ic n="branch" :s="13"></ic>worktree</button>
+        </div>
+        <div class="csend">
+          <model-picker :t="draft" can-engine></model-picker>
+          <span class="vsep"></span>
+          <button type="button" class="btn ghost sm" @click="submit(false)" :disabled="!canSend" title="只保存，不执行">存为待办</button>
+          <button type="submit" class="send" :disabled="!canSend" aria-label="发送任务" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
+        </div>
+      </div>
+    </form>
+    <form class="composer reply" v-else @submit.prevent="run" :class="{dropping:fileOver==='reply'}"
+      @dragover="onFileOver($event,'reply')" @dragleave="fileOver=''" @drop="onFileDrop($event,replyImgs)">
+      <label><span class="sr">回复</span>
+        <textarea ref="replyInput" v-model="followup" rows="1" @input="grow" @paste="onPaste($event,replyImgs)" :disabled="isActive(sel)" @keydown.enter="onEnter($event,run)"
+          :placeholder="isActive(sel) ? engLabel(sel.engine)+' 正在执行…' : (sel.session_id ? '回复 '+engLabel(sel.engine)+'…' : '补充说明（可选），↵ 开始执行')"></textarea></label>
+      <div class="atts" v-if="replyImgs.length">
+        <div class="att" v-for="(a,i) in replyImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
+          <button type="button" class="att-x" @click="removeAtt(replyImgs,i)" :aria-label="'移除图片 '+a.name"><ic n="x" :s="10" :w="2.6"></ic></button></div>
+      </div>
+      <div class="cbar">
+        <div class="cgrp">
+          <button type="button" class="ctl att-btn" @click="$refs.replyFile.click()" :disabled="isActive(sel)" title="添加图片（也可粘贴或拖入）" aria-label="添加图片"><ic n="paperclip" :s="15"></ic></button>
+          <input ref="replyFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden @change="addFiles(replyImgs,$event.target.files);$event.target.value=''">
+          <label class="ctl" :title="modeOf(sel.engine, sel.permission_mode).d"><ic n="shield" :s="13"></ic><span class="sr">权限</span>
+            <select v-model="sel.permission_mode" @change="patch({permission_mode:sel.permission_mode})"><option v-for="m in modesFor(sel.engine)" :value="m.v" :key="m.v">{{ m.s }}</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
+        </div>
+        <div class="csend">
+          <span class="hint" v-if="!isActive(sel) && sel.runs.length && !followup.trim() && !replyImgs.length">空消息 = 重新执行</span>
+          <model-picker :t="sel" :disabled="isActive(sel)" @change="patch($event)"></model-picker>
+          <button v-if="isActive(sel)" type="button" class="send stop" @click="cancel" aria-label="停止" title="停止"><ic n="stop" :s="11"></ic></button>
+          <button v-else type="submit" class="send" aria-label="发送" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
+        </div>
+      </div>
+    </form>
+    </div>
+  </main>
+
+  <div class="modal-bg" v-if="ssh.open" @mousedown.self="closeSsh">
+    <div class="sshm" role="dialog" aria-modal="true" aria-labelledby="sshm-title">
+      <header class="sshm-h">
+        <div class="sshm-ico"><ic n="server" :s="18"></ic></div>
+        <div class="sshm-ttl"><h2 id="sshm-title">SSH 连接</h2><p>{{ ssh.project }} · 只属于这个项目，可作为任务的执行位置</p></div>
+        <button type="button" class="sshm-x" @click="closeSsh" aria-label="关闭（Esc）" title="关闭（Esc）"><ic n="x" :s="16"></ic></button>
+      </header>
+      <div class="sshm-body" :class="{'has-list':ssh.list.length}">
+        <aside class="sshm-side" v-if="ssh.list.length" aria-label="连接列表">
+          <button type="button" class="sshm-add" :class="{on:ssh.mode==='new'}" @click="newSsh"><ic n="plus" :s="14"></ic>新建连接</button>
+          <button type="button" v-for="c in ssh.list" :key="c.id" class="sshm-item" :class="{on:ssh.sel===c.id && ssh.mode!=='new'}" @click="selectSsh(c.id)" :aria-current="ssh.sel===c.id">
+            <span class="sdot" :class="{on:c.connected, busy:ssh.act[c.id]}" :title="c.connected?'已连接':'未连接'"></span>
+            <span class="sshm-item-t"><b>{{ c.name }}</b><small class="mono">{{ c.target }}</small></span>
+            <span v-if="c.running" class="count run" :title="c.running+' 个任务正在这台服务器上执行'">{{ c.running }}</span>
+          </button>
+        </aside>
+
+        <section class="sshm-main" v-if="ssh.mode==='view' && curSsh">
+          <div class="sshm-scroll">
+            <div class="sshv-head">
+              <div><h3>{{ curSsh.name }}</h3><div class="sshv-sub mono">{{ curSsh.target }}</div></div>
+              <div class="sshv-acts">
+                <span class="pill" :class="{ok:curSsh.connected}"><span class="sdot" :class="{on:curSsh.connected, busy:ssh.act[curSsh.id]}"></span>{{ ssh.act[curSsh.id]==='connect' ? '连接中…' : ssh.act[curSsh.id]==='disconnect' ? '断开中…' : curSsh.connected ? '已连接' : '未连接' }}</span>
+                <button v-if="curSsh.connected" type="button" class="btn" @click="askDisconnect(curSsh)" :disabled="!!ssh.act[curSsh.id]"><ic n="unplug" :s="14"></ic>断开</button>
+                <button v-else type="button" class="btn primary" @click="connectSsh(curSsh)" :disabled="!!ssh.act[curSsh.id]"><ic n="plug" :s="14"></ic>连接</button>
+              </div>
+            </div>
+            <div v-if="ssh.confirmDisc===curSsh.id" class="confirm-row" role="alert">
+              <span>有 {{ curSsh.running }} 个任务正在这台服务器上执行，断开会同时停止它们。</span>
+              <button type="button" class="btn sm" @click="ssh.confirmDisc=null">取消</button>
+              <button type="button" class="btn sm danger-solid" @click="disconnectSsh(curSsh)">停止并断开</button>
+            </div>
+            <div v-if="ssh.err" class="sshm-err" role="alert"><ic n="info" :s="14"></ic><span>{{ ssh.err }}</span></div>
+            <div class="sshv-cmd"><code class="mono" :title="curSsh.command">{{ curSsh.command }}</code>
+              <button type="button" class="mbtn" @click="copy(curSsh.command,'sshcmd')" :title="copied==='sshcmd'?'已复制':'复制命令'" aria-label="复制命令"><ic :n="copied==='sshcmd'?'check':'copy'" :s="14"></ic></button></div>
+            <dl class="sshv-grid">
+              <div><dt>认证</dt><dd>{{ curSsh.auth==='password' ? (curSsh.has_password ? '密码（钥匙串）' : '密码（缺失）') : (curSsh.identity_file ? '密钥文件' : '密钥 / ssh config') }}</dd></div>
+              <div><dt>远程目录</dt><dd class="mono">{{ curSsh.remote_dir || '~（home）' }}</dd></div>
+              <div v-if="curSsh.identity_file && curSsh.auth!=='password'" class="wide"><dt>密钥文件</dt><dd class="mono">{{ curSsh.identity_file }}</dd></div>
+              <div v-if="curSsh.proxy_jump || curSsh.socks_proxy" class="wide"><dt>{{ curSsh.proxy_jump ? '跳板机' : 'SOCKS5 代理' }}</dt><dd class="mono">{{ curSsh.proxy_jump || curSsh.socks_proxy }}</dd></div>
+              <div><dt>claude</dt><dd class="mono">{{ curSsh.remote_claude || 'PATH 中的 claude' }}</dd></div>
+              <div><dt>codex</dt><dd class="mono">{{ curSsh.remote_codex || 'PATH 中的 codex' }}</dd></div>
+              <div v-if="curSsh.note" class="wide"><dt>说明</dt><dd>{{ curSsh.note }}</dd></div>
+            </dl>
+            <div class="sshv-flags">
+              <span class="tag" :class="{off:!curSsh.share_with_ai}"><ic :n="curSsh.share_with_ai?'check':'x'" :s="11" :w="3"></ic>{{ curSsh.share_with_ai ? '本机任务的 AI 可见' : '不告诉 AI' }}</span>
+              <span v-if="curSsh.allow_root_bypass" class="tag warn">允许 root 全部放行</span>
+              <span v-if="curSsh.running" class="tag">{{ curSsh.running }} 个任务执行中</span>
+            </div>
+            <div v-if="ssh.tests[curSsh.id]" class="sshv-test" :class="ssh.tests[curSsh.id].ok===true?'ok':ssh.tests[curSsh.id].ok===false?'bad':''" role="status">
+              <ic :n="ssh.tests[curSsh.id].ok===true?'check':ssh.tests[curSsh.id].ok===false?'x':'clock'" :s="14"></ic>
+              <span>{{ ssh.tests[curSsh.id].ok==null ? '正在测试…' : ssh.tests[curSsh.id].message + (ssh.tests[curSsh.id].ok ? ' · '+ssh.tests[curSsh.id].ms+' ms' : '') }}</span>
+            </div>
+          </div>
+          <footer class="sshm-foot">
+            <template v-if="ssh.confirmDel===curSsh.id">
+              <span class="note" style="flex:1;color:var(--fail-ink)">删除「{{ curSsh.name }}」？{{ curSsh.has_password ? '钥匙串里的密码也会删除。' : '' }}</span>
+              <button type="button" class="btn" @click="ssh.confirmDel=null">取消</button>
+              <button type="button" class="btn danger-solid" @click="delSsh(curSsh)">删除</button>
+            </template>
+            <template v-else>
+              <button type="button" class="btn" @click="testSsh(curSsh)" :disabled="ssh.tests[curSsh.id] && ssh.tests[curSsh.id].ok==null"><ic n="pulse" :s="14"></ic>测试</button>
+              <button type="button" class="btn" @click="openSshTerm(curSsh)" title="在「终端」App 中打开"><ic n="terminal" :s="14"></ic>终端</button>
+              <span class="spacer"></span>
+              <button type="button" class="btn icon danger" @click="ssh.confirmDel=curSsh.id" title="删除连接" aria-label="删除连接"><ic n="trash" :s="15"></ic></button>
+              <button type="button" class="btn" @click="editSsh(curSsh)"><ic n="edit" :s="14"></ic>编辑</button>
+            </template>
+          </footer>
+        </section>
+
+        <form class="sshm-main sshf" v-else-if="ssh.form" @submit.prevent="saveSsh" novalidate>
+          <div class="sshm-scroll">
+            <div>
+              <h3>{{ ssh.form.id ? '编辑连接' : (ssh.list.length ? '新建连接' : '添加第一个 SSH 连接') }}</h3>
+              <p v-if="!ssh.form.id" class="note" style="margin:4px 0 0">保存后可以一键连接、测试，并在新建任务时把「执行位置」选成这台服务器。</p>
+            </div>
+            <div v-if="ssh.err" class="sshm-err" role="alert"><ic n="info" :s="14"></ic><span>{{ ssh.err }}</span></div>
+
+            <div class="sshf-sec"><div class="lg">基本信息</div>
+              <div class="sshf-grid">
+                <label class="fld c2" :class="{bad:ssh.bad.name}"><span>名称 <i>*</i></span><input v-model="ssh.form.name" maxlength="60" placeholder="如：测试服" ref="sshFirst"></label>
+                <label class="fld c3" :class="{bad:ssh.bad.host}"><span>主机 <i>*</i></span><input v-model="ssh.form.host" list="ssh-hosts" placeholder="IP、域名或 ssh config 别名" class="mono" autocapitalize="off" spellcheck="false"></label>
+                <label class="fld c1" style="grid-column:span 1"><span>端口</span><input v-model.number="ssh.form.port" type="number" min="0" max="65535" placeholder="22" class="mono"></label>
+                <label class="fld c3"><span>用户</span><input v-model="ssh.form.user" placeholder="默认（ssh config / 本机用户）" class="mono" autocapitalize="off" spellcheck="false"></label>
+                <label class="fld c3"><span>远程目录</span><input v-model="ssh.form.remote_dir" placeholder="~（home）" class="mono" spellcheck="false"><small>登录后进入；远程任务在这里执行</small></label>
+                <datalist id="ssh-hosts"><option v-for="h in ssh.hosts" :key="h" :value="h"></option></datalist>
+              </div>
+            </div>
+
+            <div class="sshf-sec"><div class="lg">认证</div>
+              <div class="seg full" role="group" aria-label="认证方式">
+                <button type="button" :class="{on:ssh.form.auth==='key'}" :aria-pressed="ssh.form.auth==='key'" @click="ssh.form.auth='key'"><ic n="key" :s="14"></ic>密钥 / ssh config</button>
+                <button type="button" :class="{on:ssh.form.auth==='password'}" :aria-pressed="ssh.form.auth==='password'" @click="ssh.form.auth='password'"><ic n="lock" :s="14"></ic>用户名 + 密码</button>
+              </div>
+              <label class="fld" v-if="ssh.form.auth==='key'"><span>密钥文件</span><input v-model="ssh.form.identity_file" placeholder="~/.ssh/id_ed25519（留空使用默认密钥或 ssh-agent）" class="mono" spellcheck="false"></label>
+              <label class="fld" v-else :class="{bad:ssh.bad.password}"><span>密码 <i v-if="!ssh.form.has_password">*</i></span>
+                <input v-model="ssh.form.password" type="password" autocomplete="new-password" :placeholder="ssh.form.has_password ? '已保存在钥匙串，留空表示不修改' : '只保存在 macOS 钥匙串'">
+                <small>密码不进数据库，也不会出现在命令、提示词或日志里</small></label>
+            </div>
+
+            <details class="sshf-adv" :open="!!(ssh.form.proxy_jump||ssh.form.socks_proxy||ssh.form.remote_claude||ssh.form.remote_codex)">
+              <summary><ic n="tool" :s="14"></ic>高级<small>代理、服务器上的 CLI 路径</small><ic class="chev" n="chevd" :s="13"></ic></summary>
+              <div class="sshf-grid">
+                <label class="fld c3"><span>跳板机</span><input v-model="ssh.form.proxy_jump" placeholder="user@bastion:22" class="mono" :disabled="!!ssh.form.socks_proxy" spellcheck="false"></label>
+                <label class="fld c3"><span>SOCKS5 代理</span><input v-model="ssh.form.socks_proxy" placeholder="127.0.0.1:1080" class="mono" :disabled="!!ssh.form.proxy_jump" spellcheck="false"></label>
+                <label class="fld c3"><span>服务器上的 claude</span><input v-model="ssh.form.remote_claude" placeholder="留空 = PATH 中的 claude" class="mono" spellcheck="false"></label>
+                <label class="fld c3"><span>服务器上的 codex</span><input v-model="ssh.form.remote_codex" placeholder="留空 = PATH 中的 codex" class="mono" spellcheck="false"></label>
+              </div>
+            </details>
+
+            <div class="sshf-sec"><div class="lg">AI</div>
+              <label class="switch"><input type="checkbox" v-model="ssh.form.share_with_ai"><span class="sw"></span>
+                <span class="sw-t"><b>告诉本机任务的 AI</b><small>在本机执行的任务会附上这条连接（不含密码），AI 需要时可以 ssh 过去</small></span></label>
+              <label class="switch danger"><input type="checkbox" v-model="ssh.form.allow_root_bypass"><span class="sw"></span>
+                <span class="sw-t"><b>允许以 root 全部放行</b><small>远程 Claude 选「全部放行」时以 IS_SANDBOX=1 启动，AI 将拥有服务器的完全 root 权限。仅建议用于可重建的测试机</small></span></label>
+              <label class="fld"><span>说明</span><textarea v-model="ssh.form.note" maxlength="500" rows="2" placeholder="用途、注意事项（会一起告诉 AI），如：生产环境，只读排查"></textarea></label>
+            </div>
+          </div>
+          <footer class="sshm-foot">
+            <code class="mono sshf-prev" :title="sshPreview">{{ sshPreview }}</code>
+            <button type="button" class="btn" @click="cancelSshForm">取消</button>
+            <button type="submit" class="btn primary" :disabled="ssh.busy">{{ ssh.busy ? '保存中…' : ssh.form.id ? '保存' : '添加连接' }}</button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="pv" v-if="pv" role="dialog" aria-modal="true" :aria-label="'预览 '+pv.name">
+    <div class="pv-bar">
+      <span class="pv-name" :title="pv.name">{{ pv.name }}</span>
+      <div class="pv-zoom" role="group" aria-label="缩放">
+        <button class="pv-btn icon" @click="pvZoom(1/1.25)" title="缩小 (-)" aria-label="缩小"><ic n="minus" :s="15"></ic></button>
+        <button class="pv-btn pct" @click="pvReset" title="适应窗口 (0)">{{ pvPct }}%</button>
+        <button class="pv-btn icon" @click="pvZoom(1.25)" title="放大 (+)" aria-label="放大"><ic n="plus" :s="15"></ic></button>
+      </div>
+      <button class="pv-btn" @click="pvActual" title="原始大小 (1)"><ic n="expand" :s="15"></ic>1:1</button>
+      <a class="pv-btn" :href="pv.src" target="_blank" rel="noopener" title="新标签页打开"><ic n="external" :s="15"></ic>新标签打开</a>
+      <a class="pv-btn" :href="pv.src" :download="pv.name" title="下载"><ic n="download" :s="15"></ic>下载</a>
+      <button class="pv-btn icon" @click="pv=null" aria-label="关闭预览 (Esc)" title="关闭 (Esc)"><ic n="x" :s="16"></ic></button>
+    </div>
+    <div class="pv-stage" ref="pvStage" @wheel.prevent="pvWheel" @mousedown="pvDown">
+      <img ref="pvImg" :src="pv.src" :alt="pv.alt" draggable="false" @load="pvLoaded"
+        :class="{zoomed:pv.s>1, dragging:pv.drag}" :style="{transform:`translate(${pv.x}px,${pv.y}px) scale(${pv.s})`}">
+    </div>
+    <div class="pv-tip">滚轮缩放 · 单击放大（⌥ 单击缩小）· 拖动平移 · 点空白处关闭</div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

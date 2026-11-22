@@ -1,0 +1,6 @@
+/* 减少动态效果（放在最后，覆盖前面的动画） */
+@media (prefers-reduced-motion:reduce){
+  .sti.run,.work-h .spin,.att.busy::after,.quota-h button.spin svg{animation-duration:2.4s}
+  .card.live::before,.cstate .dot,.st-running .dot,.st-queued .dot,.thinking i,.sdot.busy{animation:none}
+  *{transition-duration:0s !important}
+}

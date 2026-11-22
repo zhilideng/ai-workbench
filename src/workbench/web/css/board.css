@@ -1,0 +1,119 @@
+/* 主区域：顶栏、看板、列表 */
+/* ---------- 主区域 ---------- */
+main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg)}
+.topbar{display:flex;align-items:center;gap:12px;height:56px;padding:0 24px;border-bottom:1px solid var(--line);flex:none;min-width:0}
+.crumb{display:flex;align-items:center;gap:8px;min-width:0;flex:1;font-size:13px;color:var(--muted);white-space:nowrap}
+.crumb>*{flex:none}
+.crumb .sep{color:var(--faint)}
+.crumb .cb{border:0;background:transparent;padding:3px 6px;margin:0 -6px;border-radius:6px;color:var(--muted)}
+.crumb .cb:hover{color:var(--text);background:var(--hover)}
+.crumb .cur{color:var(--text);font-weight:600;font-size:15px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.crumb .meta{display:flex;align-items:center;gap:16px;flex:0 1 auto;min-width:0;overflow:hidden;margin-left:12px}
+.only-m{display:none}
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:7px;background:var(--panel);box-shadow:0 0 0 1px var(--line);color:var(--text-3);font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+.chip.mono{font-family:var(--mono);font-size:11.5px}
+.chip.warn{background:var(--review-soft);box-shadow:none;color:var(--review-ink)}
+.chip.info{background:var(--run-soft);box-shadow:none;color:var(--run-ink)}
+/* 顶栏里的项目信息不加框，只是一行安静的元数据；未提交改动 / 运行中保留底色 */
+.crumb .chip{height:auto;padding:0;background:none;box-shadow:none;color:var(--muted);gap:5px}
+.crumb .chip.warn{height:22px;padding:0 8px;border-radius:6px;background:var(--review-soft);color:var(--review-ink)}
+.crumb .chip.info{height:22px;padding:0 8px;border-radius:6px;background:var(--run-soft);color:var(--run-ink)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.actions{display:flex;align-items:center;gap:8px;flex:none}
+.btn{height:30px;padding:0 11px;border-radius:8px;border:0;background:var(--panel);box-shadow:0 0 0 1px var(--line),var(--sh-card);display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);white-space:nowrap;transition:background .12s,box-shadow .12s,color .12s,opacity .12s}
+.btn:hover{box-shadow:0 0 0 1px var(--line-strong),var(--sh-card);color:var(--text)}
+.btn.sm{height:26px;padding:0 9px;border-radius:7px;font-size:12px;gap:5px}
+.btn.primary{background:var(--ink);box-shadow:none;color:var(--on-ink)}
+.btn.primary:hover{opacity:.86;color:var(--on-ink)}
+.btn.ghost{background:transparent;box-shadow:none;color:var(--text-3)}
+.btn.ghost:hover{background:var(--hover);color:var(--text)}
+.btn.danger:hover{background:var(--fail-soft);box-shadow:none;color:var(--fail-ink)}
+.btn.icon{width:30px;padding:0;justify-content:center}
+.btn.on{background:var(--hover);color:var(--text)}
+/* 卡片动作：悬停时用目标列的颜色预示结果 */
+.btn.to-done:hover{background:var(--done-soft);box-shadow:none;color:var(--done-ink)}
+.btn.to-run:hover{background:var(--run-soft);box-shadow:none;color:var(--run-ink)}
+.btn.danger-solid{background:var(--fail);box-shadow:none;color:#fff;font-weight:600}
+.btn.danger-solid:hover{filter:brightness(1.06);color:#fff}
+.btn:disabled:hover{box-shadow:0 0 0 1px var(--line),var(--sh-card);color:var(--text-2)}
+.btn.primary:disabled:hover{box-shadow:none;opacity:.45;color:var(--on-ink)}
+.seg{display:inline-flex;padding:3px;gap:2px;background:var(--hover);border-radius:10px}
+.seg button{height:26px;padding:0 10px;border:0;border-radius:7px;background:transparent;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--text-3)}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:var(--panel);box-shadow:0 1px 2px rgba(20,24,31,.1),0 0 0 1px var(--line);color:var(--text)}
+.content{flex:1;min-height:0;display:flex;flex-direction:column;padding:20px 24px 0;gap:14px}
+
+/* ---------- 看板：列头连成流水线 ---------- */
+.board-wrap{flex:1;min-height:0;overflow:auto}
+.board-wrap.kanban{overflow-x:auto;overflow-y:hidden;margin:-8px -10px 0}
+.board-wrap:not(.kanban){padding-bottom:16px}
+.board{display:grid;grid-template-columns:repeat(5,minmax(200px,1fr));grid-template-rows:100%;column-gap:var(--gut);min-width:1100px;height:100%;min-height:260px;padding:8px 10px 6px}
+.col{position:relative;z-index:0;display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0}
+.col::after{content:'';position:absolute;inset:-8px -10px -6px;border-radius:16px;border:1.5px dashed transparent;z-index:-1;pointer-events:none;transition:background .15s,border-color .15s}
+.col.can::after{border-color:var(--dash)}
+.col.drop::after{border-color:var(--run);background:var(--run-soft)}
+.col-h{display:flex;align-items:center;gap:8px;height:28px;padding:0 2px;flex:none}
+.col-h h2{margin:0;font-size:13px;font-weight:600;color:var(--text);white-space:nowrap}
+.col-h .n{font-size:12px;font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums}
+.col-h .add{width:22px;height:22px;border:0;background:transparent;border-radius:6px;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:-2px}
+.col-h .add:hover{background:var(--hover);color:var(--text)}
+.col-h .rail{position:relative;flex:1;min-width:16px;height:1px;background:var(--rail);margin:0 calc(6px - var(--gut)) 0 6px}
+.col-h .rail::after{content:'';position:absolute;right:0;top:-2px;width:5px;height:5px;border-top:1px solid var(--rail);border-right:1px solid var(--rail);transform:rotate(45deg)}
+.col-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:10px;padding:2px 8px 24px;margin:0 -8px;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.col-body:hover{scrollbar-color:var(--dash) transparent}
+.card{position:relative;flex:none;background:var(--panel);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;cursor:pointer;text-align:left;box-shadow:0 0 0 1px var(--line),var(--sh-card);transition:box-shadow .15s}
+.card:hover{box-shadow:0 0 0 1px var(--line-strong),var(--sh-lift)}
+.card[draggable=true]{cursor:grab}
+.card[draggable=true]:active{cursor:grabbing}
+.card.dragging{opacity:.4}
+.card-top{display:flex;align-items:center;gap:8px;height:20px;font-size:12px;color:var(--muted);min-width:0}
+.eng{display:inline-flex;align-items:center;gap:5px;color:var(--text-3);font-weight:500;flex:none}
+.tid{color:var(--faint);font-variant-numeric:tabular-nums}
+.card-top .time{margin-left:auto;white-space:nowrap;font-variant-numeric:tabular-nums}
+.card-del{border:0;background:none;color:var(--faint);width:22px;height:22px;margin:0 -6px 0 -4px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex:none;opacity:0;transition:opacity .12s}
+.card:hover .card-del,.card:focus-within .card-del{opacity:1}
+.card-del:hover,.row-del:hover{color:var(--fail);background:var(--fail-soft)}
+@media (hover:none){.card-del{opacity:1}}
+.card h3{margin:0;font-size:14px;font-weight:500;line-height:1.5;color:var(--text);word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.card-foot{display:flex;align-items:center;gap:10px;min-height:26px;margin-top:2px}
+.cf-l{display:flex;align-items:center;gap:12px;min-width:0;flex:1;font-size:12px;color:var(--muted)}
+.cf-l>span{display:inline-flex;align-items:center;gap:5px;min-width:0}
+.ctx{color:var(--text-3)}
+.cf-l>.proj{flex-shrink:1}
+.cf-l>.ctx:not(.proj){flex-shrink:0;max-width:55%}
+.cstate{font-weight:500;flex:none}
+.cf-l>.cstate{flex:none}
+.cstate.fail{color:var(--fail-ink)}
+.cstate.cancel{color:var(--muted)}
+.cstate.run{color:var(--run-ink)}
+.cstate .dot{animation:pulse 1.2s infinite}
+.card-foot .btn{margin-left:auto;flex:none}
+/* 执行中的卡片：顶边一道扫过的信号光 */
+.card.live{box-shadow:0 0 0 1px var(--run-track),var(--sh-card)}
+.card.live::before{content:'';position:absolute;left:14px;right:14px;top:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--run),transparent) no-repeat;background-size:40% 100%;animation:sweep 1.6s ease-in-out infinite}
+@keyframes sweep{from{background-position:-70% 0}to{background-position:170% 0}}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:88px;padding:16px;border-radius:12px;border:1px dashed var(--dash);text-align:center}
+.empty b{font-size:12.5px;font-weight:500;color:var(--text-3)}
+.empty span{font-size:11.5px;color:var(--muted);max-width:220px;line-height:1.5}
+.more{flex:none;border:0;background:transparent;color:var(--muted);font-size:12px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px}
+.more:hover{background:var(--hover);color:var(--text)}
+.status{display:inline-flex;align-items:center;gap:6px;height:22px;font-size:12px;font-weight:500;border-radius:6px;padding:0 8px;white-space:nowrap}
+.st-todo,.st-cancelled{color:var(--text-3);background:var(--sunk)}
+.st-running,.st-queued{color:var(--run-ink);background:var(--run-soft)}
+.st-review{color:var(--review-ink);background:var(--review-soft)}
+.st-done{color:var(--done-ink);background:var(--done-soft)}
+.st-failed,.st-interrupted{color:var(--fail-ink);background:var(--fail-soft)}
+.st-running .dot,.st-queued .dot{animation:pulse 1.2s infinite}
+
+/* 列表 */
+.list{background:var(--panel);border-radius:12px;box-shadow:0 0 0 1px var(--line),var(--sh-card);overflow:clip}
+.list table{width:100%;border-collapse:collapse;font-size:13px}
+.list th{position:sticky;top:0;z-index:1;text-align:left;font-size:12px;font-weight:500;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.list td{padding:9px 16px;border-bottom:1px solid var(--line-3);vertical-align:middle}
+.list tr:last-child td{border-bottom:none}
+.list tbody tr{cursor:pointer}.list tbody tr:hover td{background:var(--hover)}
+.list .t{font-weight:500;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list .eng.remote{color:var(--text-3);font-weight:400}
+.row-del{border:0;background:none;color:var(--faint);width:28px;height:28px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center}
+.row-del:disabled{opacity:.3;background:none;color:var(--faint)}

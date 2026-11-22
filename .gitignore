@@ -1,5 +1,18 @@
-data/
+# Python
 __pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# 打包产物
+build/
+dist/
+
+# 本地数据（旧版网页版的数据目录、开发调试用的数据目录）
+data/
+.devdata/
+
 .DS_Store
 *.bak
 *.bak[0-9]*
