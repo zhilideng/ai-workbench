@@ -24,12 +24,12 @@ sed -i '' -E "s/^__version__ = \".*\"/__version__ = \"$VER\"/" src/workbench/__i
 
 NOTES="$("$PY" scripts/changelog.py notes "$VER")"
 git add CHANGELOG.md pyproject.toml src/workbench/__init__.py
-git commit -q -F - <<EOF
+git commit -q --cleanup=verbatim -F - <<EOF
 build(release): 发布 $TAG
 
 $NOTES
 EOF
-git tag -a "$TAG" -F - <<EOF
+git tag -a --cleanup=verbatim "$TAG" -F - <<EOF
 $TAG
 
 $NOTES
