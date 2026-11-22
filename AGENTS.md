@@ -1,0 +1,69 @@
+# AGENTS.md
+
+本文件定义 `ai-workbench` 仓库的项目规范，适用于所有在本仓库工作的人和 AI 助手。用户指令、系统约束和开发者指令高于本文件。
+
+## 工作前提
+
+- 开始任务前先阅读 `README.md`，确认目标模块和目录职责。
+- 需求、影响范围或验收标准不明确时先提问，不做静默假设；存在更简单方案时应明确提出。
+
+## 模块边界
+
+代码都在 `src/workbench/`，依赖方向为 `api / desktop → services → engines / ssh / db → core`，下层不得引用上层。
+
+- `core/`：配置、业务异常、shell 工具。
+- `db/`：SQLite 连接、表结构与迁移、repositories；SQL 只写在这一层。
+- `engines/`：AI CLI 引擎（claude、codex），实现 `engines/base.py` 的 `Engine` 接口并在注册表登记。
+- `ssh/`：SSH 命令拼接、持久连接、钥匙串。
+- `services/`：业务逻辑，不依赖 FastAPI，出错时抛 `core/errors.py` 中的异常。
+- `api/`：HTTP 路由，只做参数解析并调用 services。
+- `desktop/`：macOS 原生壳（窗口、菜单、内置服务、访问令牌、原生桥接）。
+- `web/`：前端。`js/core` 基础工具，`js/features` 功能模块（Vue mixin），`js/components` 组件，`css/` 按区域拆分。
+- `packaging/`、`scripts/`：打包、发布与开发脚本；`tests/`：测试。
+
+## 开发规则
+
+- 优先使用满足当前需求的最小实现，不为一次性逻辑或假设中的未来需求增加抽象、依赖或配置。
+- 只修改当前任务必需的文件，不顺带重构无关模块；保留用户已有或已暂存的改动。
+- 扩展时遵循既有扩展点（新引擎、新接口、新前端模块、新表字段），做法见 `README.md`「扩展」一节。
+- 修改 API、数据库结构、环境变量、数据目录或打包配置时，同步检查前端调用方、迁移逻辑和文档。
+- 修复缺陷时先复现问题，并在可行时补充回归测试。
+- 项目文档与代码注释默认使用中文，命令、路径、配置键和代码标识符保持原文。
+- 不提交构建产物、缓存、日志、虚拟环境和本地数据（`build/`、`dist/`、`.venv/`、`data/`、`.devdata/` 等）。
+
+## 验证与更新本地应用
+
+每次迭代功能或修复问题后，必须完成以下步骤，没有验证证据时不得声称完成：
+
+1. 运行测试：`.venv/bin/python -m pytest -q`。
+2. 涉及界面时，用 `./scripts/dev_server.sh` 在浏览器里检查，或以 `.venv/bin/python -m workbench --debug` 运行源码检查。
+3. **主动更新本地应用**：运行 `./scripts/build_app.sh --install`，重新打包、安装到 `/Applications/AI Workbench.app` 并自动重新打开，方便用户立即用新版本验证。应用里有任务在执行时，脚本会等待用户确认退出，不会强制结束任务。
+
+## 版本与 Tag
+
+- 版本号遵循语义化版本 `主.次.修订`，同时写在 `pyproject.toml` 和 `src/workbench/__init__.py`（应用「关于」与 Info.plist 读取后者）。
+  - 新功能或需求迭代：升级次版本（`1.1.0 → 1.2.0`）。
+  - 问题修复、文档、工程配置：升级修订号（`1.1.0 → 1.1.1`）。
+  - 不兼容的数据或接口变更：升级主版本，并在提交正文说明迁移方式。
+- **每次版本需求迭代都必须新增一个版本 Tag**，格式为 `v主.次.修订`（如 `v1.2.0`），使用附注 Tag，指向该版本的发布提交；已发布的 Tag 不得移动或删除。
+- 发布统一使用 `./scripts/release.sh <版本号> [--push]`：自动改版本号、跑测试和密钥检查、提交 `build(release): 发布 vX.Y.Z`、打 Tag，并更新本地应用。
+- 推送提交时必须同时推送对应 Tag（`git push origin <分支> --follow-tags` 或 `release.sh --push`）。
+
+## 密钥与隐私
+
+- **禁止把任何私密密钥提交到 GitHub**：API Key、Token、密码、私钥、证书、OAuth 凭据、`.env`、`~/.claude` / `~/.codex` 下的凭据文件，以及用户数据库、运行日志、上传图片等本地数据。
+- 密钥只能放在环境变量、macOS 钥匙串或被 `.gitignore` 忽略的本地文件中；代码与文档里只能出现占位符（如 `<your-api-key>`）。
+- 仓库启用了提交前检查：克隆后执行一次 `git config core.hooksPath .githooks`。钩子会运行 `scripts/check_secrets.py` 扫描暂存内容，发现疑似密钥即阻止提交；测试 `tests/test_no_secrets.py` 也会扫描全部已跟踪文件。
+- 不得用 `--no-verify` 绕过检查。确认是误报时，在该行末尾加注释 `secret-scan: allow` 并在提交正文说明原因。
+- 一旦密钥被提交（即使未推送），视为已泄露：立即通知用户轮换该密钥，再清理提交历史。
+- 不在日志、提示词、错误信息或界面中输出明文密码和令牌。
+
+## Git 提交规范
+
+- 提交标题使用 `type(scope): 中文说明`，例如 `fix(runner): 修复远程任务停止后状态未更新`、`feat(web): 增加任务搜索高亮`。
+- `type` 使用 `feat`、`fix`、`refactor`、`docs`、`test`、`build`、`ci`、`chore`、`perf` 或 `revert`。
+- `scope` 必填，使用模块标识：`core`、`db`、`engines`、`ssh`、`services`、`runner`、`api`、`desktop`、`web`、`build`、`release`、`docs` 或 `repo`；多模块变更使用主要受影响模块，无法归属时使用 `repo`。
+- 标题和正文使用中文，简洁说明实际变更，不写句号，不使用「更新」「修改」等含糊描述。
+- 每个提交只处理一个完整的功能请求或修复，不混入无关改动；非简单变更在正文说明影响范围、变更原因和兼容性影响。
+- 破坏性变更使用 `type(scope)!:`，并在正文中增加 `BREAKING CHANGE:` 说明迁移方式。
+- 未经用户明确要求，不得提交、合并、推送、打 Tag 推送或修改远端状态。

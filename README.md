@@ -35,11 +35,16 @@ PYTHONPATH=src .venv/bin/python -m workbench.tools.import_legacy <旧的 workben
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+git config core.hooksPath .githooks        # 启用提交前密钥检查（克隆后执行一次）
 .venv/bin/python -m workbench --debug      # 以桌面窗口运行源码（--debug 打开 Web 检查器）
 .venv/bin/python -m pytest                 # 测试
 ./scripts/dev_server.sh                    # 只起本地服务，在浏览器里调前端：http://127.0.0.1:8765（数据在 ./.devdata）
 ./scripts/build_app.sh                     # 打包到 dist/AI Workbench.app
+./scripts/build_app.sh --install           # 打包并替换、重新打开本地应用
+./scripts/release.sh 1.2.0 --push          # 发布新版本：改版本号、测试、提交、打 Tag v1.2.0、更新应用、推送
 ```
+
+项目规范（版本 Tag、密钥、提交格式、验证流程）见 [AGENTS.md](AGENTS.md)。
 
 ## 架构
 
