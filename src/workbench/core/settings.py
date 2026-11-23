@@ -78,6 +78,14 @@ class Settings:
             self._store.update(values)
             self._save()
 
+    def recent_folder(self, ssh_id: int) -> str:
+        return self._store.get("recent_folders", {}).get(str(ssh_id), "")
+
+    def remember_folder(self, ssh_id: int, path: str) -> None:
+        with self._lock:
+            self._store.setdefault("recent_folders", {})[str(ssh_id)] = path
+            self._save()
+
     # ---- 配置项
     @property
     def projects_root(self) -> Optional[Path]:

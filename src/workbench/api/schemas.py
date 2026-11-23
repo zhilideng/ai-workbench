@@ -16,6 +16,7 @@ class TaskIn(BaseModel):
     effort: str = ""
     use_worktree: bool = False
     ssh_id: int = 0                   # 执行位置：0 = 本机；否则为本项目的 SSH 连接 id
+    source_path: str = ""
     run_now: bool = False
     images: list[str] = []
 
@@ -62,3 +63,17 @@ class SshIn(BaseModel):
 
 class SettingsIn(BaseModel):
     projects_root: Optional[str] = None
+
+
+class ProjectSourceIn(BaseModel):
+    path: str
+    ssh_id: int = 0
+
+
+class ProjectIn(BaseModel):
+    name: str
+    sources: list[ProjectSourceIn]
+
+
+class ProjectSourcesIn(BaseModel):
+    sources: list[ProjectSourceIn]

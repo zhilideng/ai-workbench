@@ -8,12 +8,12 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from workbench.core.errors import BadRequest, Conflict, NotFound
+from workbench.core.errors import BadRequest, Conflict, NotFound, WorkbenchError
 from workbench.core.shell import git
 from workbench.db.repositories import RunRepo, SshRepo, TaskRepo
 from workbench.engines import get_engine
 from workbench.services import connections, runlog, uploads
-from workbench.services.projects import project_path
+from workbench.services.projects import project_path, project_sources
 from workbench.services.runner import Runner, check_remote_bypass
 from workbench.ssh import commands as cmds
 from workbench.ssh import transport
@@ -51,6 +51,7 @@ def get_task(task_id: int) -> dict:
         try:
             c = connections.of_task(t)
             t["ssh_target"] = cmds.target(c, with_port=False)
+            t["ssh_project"] = c["project"]
             t["ssh_connected"] = transport.is_connected(c)
             t["resume_cmd"] = (cmds.resume_in_terminal(c, engine.resume_command(t["session_id"], engine.remote_bin(c)))
                                if t["session_id"] else "")
@@ -67,20 +68,27 @@ def get_task(task_id: int) -> dict:
 async def create_task(runner: Runner, *, project: str, prompt: str, title: str = "", engine: str = "claude",
                       permission_mode: str = "acceptEdits", model: str = "", effort: str = "",
                       use_worktree: bool = False, ssh_id: int = 0, run_now: bool = False,
-                      images: Optional[list[str]] = None) -> dict:
-    project_path(project)
+                      images: Optional[list[str]] = None, source_path: str = "") -> dict:
+    sources = project_sources(project)
+    if source_path and {"path": source_path, "ssh_id": ssh_id} not in sources:
+        raise BadRequest("请选择该项目关联的源文件夹")
+    if not ssh_id:
+        if source_path and not Path(source_path).is_dir():
+            raise BadRequest("源文件夹不存在")
+        source_path = source_path or str(project_path(project))
     get_engine(engine)
     if not prompt.strip():
         raise BadRequest("内容不能为空")
     _check_effort(effort)
     imgs = uploads.validate(images or [])
     if ssh_id:
-        if not SshRepo.get(ssh_id, project):
+        if not SshRepo.get(ssh_id, None if source_path else project):
             raise BadRequest("SSH 连接不存在或不属于该项目")
         use_worktree = False  # 远程任务直接在远程目录里执行
     tid = TaskRepo.create(project=project, kind="task", title=title.strip() or derive_title(prompt), description=prompt,
                           priority="", permission_mode=permission_mode, model=model, effort=effort,
-                          use_worktree=int(use_worktree), ssh_id=ssh_id, engine=engine, images=json.dumps(imgs))
+                          use_worktree=int(use_worktree), ssh_id=ssh_id, source_path=source_path,
+                          engine=engine, images=json.dumps(imgs))
     if run_now:
         await runner.start(tid)
     return TaskRepo.get(tid)
@@ -100,7 +108,7 @@ def delete_task(runner: Runner, task_id: int) -> dict:
     if t and t["branch"] and t["workdir"]:
         # 移除 worktree，但保留分支，避免丢失代码
         subprocess.run(["git", "worktree", "remove", "--force", t["workdir"]],
-                       cwd=project_path(t["project"]), capture_output=True)
+                       cwd=t["source_path"] or project_path(t["project"]), capture_output=True)
     imgs = TaskRepo.images(t or {})
     for r in RunRepo.of_task(task_id):
         runlog.delete(r["id"])
@@ -179,7 +187,14 @@ def resolve_file(task_id: int, path: str) -> Path:
         raise NotFound("任务不存在")
     if t["ssh_id"]:
         raise NotFound("远程任务的文件在服务器上，无法在这里预览")
-    roots = [Path(p).resolve() for p in (t["workdir"], str(project_path(t["project"])), str(uploads.uploads_dir())) if p]
+    source = t["source_path"]
+    if not source:
+        try:
+            source = str(project_path(t["project"]))
+        except WorkbenchError:
+            if not t["workdir"]:
+                raise
+    roots = [Path(p).resolve() for p in (t["workdir"], source, str(uploads.uploads_dir())) if p]
     raw = path[7:] if path.startswith("file://") else path
     cand = Path(raw).expanduser()
     for f in ([cand] if cand.is_absolute() else [r / cand for r in roots]):

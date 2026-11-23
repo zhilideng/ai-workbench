@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/projects.css">
 <link rel="stylesheet" href="css/board.css">
 <link rel="stylesheet" href="css/composer.css">
 <link rel="stylesheet" href="css/model-picker.css">
@@ -34,10 +35,11 @@
     </div>
     <div class="psw" :class="{open:pswOpen}" ref="psw">
       <button type="button" class="psw-btn" @click="togglePsw" :aria-expanded="pswOpen" aria-haspopup="listbox" title="切换项目（⌘K）">
-        <span v-if="cur" class="ini">{{ cur.charAt(0) }}</span><span v-else class="ini all"><ic n="grid" :s="12"></ic></span>
+        <ic v-if="cur" n="folder" :s="17"></ic><span v-else class="ini all"><ic n="grid" :s="12"></ic></span>
         <span class="name">{{ cur || '全部项目' }}</span>
         <span v-if="cur ? countRunning(cur) : runningCount" class="count run">{{ cur ? countRunning(cur) : runningCount }}</span>
-        <span class="kbd">⌘K</span><ic class="chev" n="chevd" :s="13"></ic>
+        <span v-if="activeSource" class="project-badge">{{ sourceLabel(activeSource) }}</span>
+        <span v-else class="kbd">⌘K</span><ic class="chev" n="chevd" :s="13"></ic>
       </button>
       <div class="psw-pop" v-if="pswOpen" role="listbox" aria-label="项目">
         <input ref="projSearch" type="search" v-model="pq" placeholder="搜索项目" aria-label="搜索项目" @keydown.enter="pickFirstProject" @keydown.esc.stop="pswOpen=false">
@@ -56,6 +58,7 @@
           <span class="name">{{ cfg.projects_root ? shortPath(cfg.projects_root) : '选择项目目录…' }}</span><span class="kbd">更改</span></button>
       </div>
     </div>
+    <button type="button" class="project-new" @click="openProjectEditor(false,$event.currentTarget)"><ic n="plus" :s="16"></ic>新建项目</button>
     <label class="side-search"><ic n="search" :s="13"></ic>
       <input type="search" v-model="tq" aria-label="搜索任务" placeholder="搜索任务"></label>
 
@@ -145,11 +148,14 @@
         <div class="crumb">
           <span class="cur">{{ cur || '全部项目' }}</span>
           <span class="meta chips" v-if="curProject">
-            <span class="chip mono" :title="curProject.path"><ic n="folder" :s="12"></ic>{{ shortPath(curProject.path) }}</span>
-            <span class="chip mono" v-if="curProject.is_git"><ic n="branch" :s="12"></ic>{{ curProject.branch }}</span>
-            <span class="chip" v-else>非 git 仓库</span>
-            <span class="chip warn" v-if="curProject.dirty"><span class="dot"></span>{{ curProject.dirty }} 个未提交改动</span>
-            <span class="chip" v-if="curProject.has_claude_md"><ic n="check" :s="11"></ic>CLAUDE.md</span>
+            <template v-if="activeSource">
+              <span class="chip" :title="activeSource.path"><ic n="folder" :s="12"></ic>{{ sourceDisplay(activeSource) }}</span>
+              <span class="chip" v-if="activeSource.ssh_id"><ic n="server" :s="12"></ic>{{ sourceLabel(activeSource) }}</span>
+              <span class="chip mono" v-else-if="activeSource.is_git"><ic n="branch" :s="12"></ic>{{ activeSource.branch }}</span>
+              <span class="chip" v-else><ic n="branch" :s="12"></ic>非 git 仓库</span>
+              <span class="chip warn" v-if="activeSource.dirty"><span class="dot"></span>{{ activeSource.dirty }} 个未提交改动</span>
+              <span class="chip" v-if="activeSource.has_claude_md"><ic n="check" :s="11"></ic>CLAUDE.md</span>
+            </template>
           </span>
           <span class="meta chips" v-else>
             <span class="chip">{{ projects.length }} 个项目</span>
@@ -158,6 +164,21 @@
           </span>
         </div>
         <div class="actions">
+          <div v-if="curProject" class="project-sources" ref="sourceMenu">
+            <button type="button" class="source-menu-button" :aria-expanded="sourcesOpen" aria-controls="source-menu"
+              @click="sourcesOpen=!sourcesOpen;pswOpen=false"><ic n="folder" :s="17"></ic>源文件夹（{{ projectSources.length }}）<ic n="chevd" :s="13"></ic></button>
+            <div id="source-menu" class="source-menu" v-if="sourcesOpen">
+              <button type="button" class="source-menu-row" v-for="s in projectSources" :key="sourceKey(s)"
+                :class="{selected:s===activeSource}" :aria-pressed="s===activeSource" @click="selectProjectSource(s)">
+                <ic n="folder" :s="20"></ic>
+                <span class="source-text"><span class="source-name"><b class="ell">{{ s.name }}</b>
+                  <small class="project-badge"><ic :n="s.ssh_id?'server':'laptop'" :s="12"></ic>{{ s.ssh_id ? sourceLabel(s) : '此电脑' }}</small></span>
+                  <span class="source-path ell" :title="s.path">{{ sourceDisplay(s) }}</span></span>
+                <ic v-if="s===activeSource" class="source-check" n="check" :s="16"></ic>
+              </button>
+              <button type="button" class="source-menu-manage" @click="openProjectEditor(true,$refs.sourceMenu.firstElementChild)"><ic n="settings" :s="16"></ic>管理源文件夹</button>
+            </div>
+          </div>
           <button v-if="curProject" class="btn ghost hide-m" @click="openSsh" title="管理本项目的 SSH 远程连接"><ic n="server" :s="14"></ic>SSH<span v-if="curProject.ssh_count" class="count">{{ curProject.ssh_count }}</span></button>
           <div class="seg" role="group" aria-label="视图">
             <button :class="{on:view==='board'}" :aria-pressed="view==='board'" @click="view='board'" title="看板"><ic n="board" :s="13"></ic><span class="hide-m">看板</span></button>
@@ -365,14 +386,14 @@
               <option value="claude" :disabled="cfg.engines && !cfg.engines.claude">Claude Code</option>
               <option value="codex" :disabled="cfg.engines && !cfg.engines.codex">Codex</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
           <label class="ctl" :title="draft.ssh_id>0 ? '在服务器上执行：ssh 到该连接的远程目录，用服务器上的 '+engLabel(draft.engine)+' CLI 干活' : '执行位置：本机'"><ic :n="draft.ssh_id>0?'server':'laptop'" :s="13"></ic><span class="sr">执行位置</span>
-            <select v-model.number="draft.ssh_id"><option :value="0">本机</option>
-              <option v-for="c in projSsh" :key="c.id" :value="c.id">{{ sshLabel(c) }}</option>
+            <select v-model.number="draft.ssh_id"><option :value="0" :disabled="!!curProject && !projectSources.some(s=>!s.ssh_id && s.available)">本机</option>
+              <option v-for="c in executionConnections" :key="c.id" :value="c.id">{{ sshLabel(c) }}</option>
               <option :value="-1">管理 SSH 连接…</option></select><ic class="chev" n="chevd" :s="11"></ic>
             <span v-if="selSsh" class="sdot" :class="{on:selSsh.connected, busy:ssh.act[selSsh.id]}" :title="selSsh.connected?'已连接':'未连接（发送任务时自动连接）'"></span></label>
-          <button v-if="selSsh && selSsh.connected" type="button" class="loc-disc" @click="disconnectSsh(selSsh, cur)" :disabled="!!ssh.act[selSsh.id]" title="断开与这台服务器的连接">{{ ssh.act[selSsh.id] ? '断开中…' : '断开' }}</button>
+          <button v-if="selSsh && selSsh.connected" type="button" class="loc-disc" @click="disconnectSsh(selSsh, selSsh.project || cur)" :disabled="!!ssh.act[selSsh.id]" title="断开与这台服务器的连接">{{ ssh.act[selSsh.id] ? '断开中…' : '断开' }}</button>
           <label class="ctl" :title="modeOf(draft.engine, draft.permission_mode).d"><ic n="shield" :s="13"></ic><span class="sr">权限</span>
             <select v-model="draft.permission_mode"><option v-for="m in modesFor(draft.engine)" :value="m.v" :key="m.v">{{ m.s }}</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
-          <button type="button" v-if="curProject && curProject.is_git && !(draft.ssh_id>0)" class="toggle" :class="{on:draft.use_worktree}" :aria-pressed="draft.use_worktree"
+          <button type="button" v-if="executionSource?.is_git" class="toggle" :class="{on:draft.use_worktree}" :aria-pressed="draft.use_worktree"
             @click="draft.use_worktree=!draft.use_worktree" title="在独立 git worktree（分支 wb/task-N）中执行，可并行、不影响主工作区"><ic n="branch" :s="13"></ic>worktree</button>
         </div>
         <div class="csend">
@@ -410,11 +431,126 @@
     </div>
   </main>
 
-  <div class="modal-bg" v-if="ssh.open" @mousedown.self="closeSsh">
-    <div class="sshm" role="dialog" aria-modal="true" aria-labelledby="sshm-title">
+  <dialog v-if="sourceEditor" ref="sourceDialog" class="source-dialog"
+    :class="{'source-ssh':ssh.fromFolder,'source-picker':folderPicker && !ssh.fromFolder,'source-manager':!folderPicker && sourceEditor.manage}"
+    :aria-labelledby="ssh.fromFolder ? 'sshm-title' : 'source-dialog-title'" @cancel.prevent="closeProjectEditor" @click.self="closeProjectEditor">
+    <div v-if="ssh.fromFolder" id="folder-ssh-panel"></div>
+    <section v-else-if="folderPicker" class="source-panel">
+      <header class="source-header">
+        <h2 id="source-dialog-title" ref="folderTitle" tabindex="-1">选择源文件夹</h2>
+        <button type="button" class="source-close" @click="closeProjectEditor" aria-label="关闭"><ic n="x" :s="18"></ic></button>
+      </header>
+      <div class="folder-body">
+        <div class="folder-tabs" role="group" aria-label="目录位置">
+          <button type="button" :aria-pressed="folderPicker.mode==='local'" @click="setFolderMode('local')"><ic n="laptop" :s="18"></ic>本机</button>
+          <button type="button" :aria-pressed="folderPicker.mode==='ssh'" @click="setFolderMode('ssh')"><ic class="ssh-folder-dot" n="done" :s="15"></ic>SSH 连接</button>
+        </div>
+        <div class="folder-browser" :class="{'folder-remote':folderPicker.mode==='ssh' && folderPicker.connections.length}">
+          <div class="folder-connections" v-if="folderPicker.mode==='ssh' && folderPicker.connections.length">
+            <strong>连接</strong>
+            <button type="button" v-for="c in folderPicker.connections" :key="c.id" :aria-pressed="c.id===folderPicker.sshId" @click="selectFolderConnection(c.id)"><ic n="server" :s="16"></ic><span class="ell">{{ c.name }}</span></button>
+            <button type="button" class="folder-connection-action" @click="openFolderSsh()"><ic n="plus" :s="14"></ic>添加 SSH 连接</button>
+            <button v-if="folderPicker.connections.some(c=>c.id===folderPicker.sshId && c.project==='')" type="button" class="folder-connection-action"
+              @click="openFolderSsh(folderPicker.sshId)"><ic n="edit" :s="14"></ic>编辑当前连接</button>
+          </div>
+          <div class="folder-tree-box">
+            <label class="folder-search"><ic n="search" :s="17"></ic><input type="search" v-model="folderPicker.query" placeholder="搜索文件夹..." aria-label="搜索文件夹"></label>
+            <div class="folder-tree" v-if="folderRows.length && !folderPicker.error" aria-label="目录列表">
+              <template v-for="row in folderRows" :key="row.path">
+                <div class="folder-node" :class="{selected:row.path===folderPicker.selected}" :style="{'--depth':row.depth}">
+                  <button v-if="row.expandable" type="button" class="folder-expand" :aria-expanded="!!row.open"
+                    :aria-label="(row.open ? '折叠 ' : '展开 ')+row.name" @click="toggleFolder(row.path)"><ic :n="row.open?'chevd':'chevr'" :s="13"></ic></button>
+                  <span v-else class="folder-expand" aria-hidden="true"></span>
+                  <button type="button" class="folder-node-label" :aria-pressed="row.path===folderPicker.selected" @click="selectFolder(row.path)" @dblclick="toggleFolder(row.path)">
+                    <ic class="folder-blue" :n="row.data?.error==='无权访问该目录' ? 'folder-lock' : 'folder-solid'" :s="18"></ic>
+                    <ic v-if="row.data?.error==='目录不存在'" class="folder-warning" n="info" :s="13"></ic><span class="ell">{{ row.name }}</span>
+                  </button>
+                </div>
+                <div v-if="row.path===folderPicker.selected && row.open" class="folder-hint" :style="{'--depth':row.depth}">
+                  <span v-if="row.data?.loading" role="status">正在读取目录…</span>
+                  <template v-else-if="row.data?.error">
+                    <span class="folder-warning"><ic n="info" :s="13"></ic>{{ row.data.error }}</span>
+                    <button type="button" v-if="row.path!=='/'" @click="folderParent">返回上级</button>
+                  </template>
+                  <span v-else-if="row.data?.folders?.length===0">没有子文件夹</span>
+                </div>
+              </template>
+            </div>
+            <div v-else class="folder-state" role="status">
+              <template v-if="folderPicker.error">
+                <ic class="folder-warning" n="alert" :s="25"></ic><b>{{ folderPicker.error }}</b>
+                <button type="button" class="source-btn" @click="initFolderPicker(folderPicker.position)">重试</button>
+              </template>
+              <span v-else-if="folderPicker.loading">正在读取目录…</span>
+              <span v-else-if="folderPicker.query">没有匹配的文件夹</span>
+              <template v-else-if="folderPicker.mode==='ssh' && !folderPicker.connections.length">
+                <span>添加连接后即可浏览服务器上的目录。</span>
+                <button type="button" class="source-btn blue" @click="openFolderSsh()"><ic n="plus" :s="14"></ic>添加 SSH 连接</button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <p v-if="folderPicker.pathError || folderPicker.duplicate" class="source-error" role="alert">{{ folderPicker.pathError || folderPicker.duplicate }}</p>
+      </div>
+      <footer class="source-footer">
+        <div class="folder-location">
+          <ic n="folder" :s="16"></ic>
+          <input type="text" aria-label="目录路径" placeholder="粘贴目录路径" autocapitalize="off" spellcheck="false"
+            :value="folderPicker.pathInput" :aria-invalid="!!folderPicker.pathError" :disabled="folderPicker.mode==='ssh' && !folderPicker.sshId"
+            @input="editFolderPath($event.target.value)" @keydown.enter.prevent="goToFolderPath">
+          <button type="button" class="folder-go" @click="goToFolderPath"
+            :disabled="folderPicker.jumping || !folderPicker.pathInput.trim() || (folderPicker.mode==='ssh' && !folderPicker.sshId)">{{ folderPicker.jumping ? '读取中…' : '前往' }}</button>
+        </div>
+        <button type="button" class="source-btn" @click="closeProjectEditor">取消</button>
+        <button type="button" class="source-btn blue" @click="chooseFolder"
+          :disabled="!canChooseFolder">选择</button>
+      </footer>
+    </section>
+    <form v-else class="source-panel" @submit.prevent="saveProjectEditor">
+      <header class="source-header">
+        <h2 id="source-dialog-title">{{ sourceEditor.manage ? '管理源文件夹' : '创建项目' }}</h2>
+        <button type="button" class="source-close" @click="closeProjectEditor" :disabled="sourceEditor.saving" aria-label="关闭"><ic n="x" :s="18"></ic></button>
+      </header>
+      <div class="source-body">
+        <label v-if="!sourceEditor.manage" class="source-field">
+          <b>项目名称</b>
+          <span class="source-input"><ic n="folder" :s="18"></ic><input ref="projectName" v-model="sourceEditor.name" maxlength="100" placeholder="请输入项目名称"></span>
+        </label>
+        <h3>源文件夹</h3>
+        <button v-if="!sourceEditor.sources.length && !sourceEditor.manage" type="button" class="source-empty" @click="openFolderPicker()">
+          <b><ic n="folder" :s="19"></ic>选择源文件夹</b><span>可以选择本机目录或远程服务器目录</span>
+        </button>
+        <div v-else class="source-items">
+          <div class="source-item" v-for="(s,i) in sourceEditor.sources" :key="sourceKey(s)">
+            <ic class="folder-blue" n="folder-solid" :s="21"></ic>
+            <span class="source-text"><span class="source-name"><b class="ell">{{ s.name }}</b>
+              <small class="project-badge"><ic v-if="s.ssh_id" n="server" :s="13"></ic>{{ sourceLabel(s) }}{{ s.ssh_id ? ' (SSH)' : '' }}</small></span>
+              <span class="source-path ell" :title="s.path">{{ sourceDisplay(s) }}</span></span>
+            <button type="button" class="source-remove" @click="sourceEditor.sources.splice(i,1)" :disabled="sourceEditor.saving"
+              title="移除关联" :aria-label="'移除关联 '+s.name"><ic n="x" :s="15"></ic></button>
+            <button type="button" class="source-btn source-change" @click="openFolderPicker(i)" :disabled="sourceEditor.saving">更改</button>
+          </div>
+          <button type="button" class="source-btn source-add" @click="openFolderPicker()" :disabled="sourceEditor.saving"><ic n="plus" :s="15"></ic>添加文件夹</button>
+        </div>
+        <p v-if="sourceEditor.manage" class="source-note">源文件保留在原位置</p>
+        <p v-if="sourceEditor.error" class="source-error" role="alert">{{ sourceEditor.error }}</p>
+      </div>
+      <footer class="source-footer">
+        <button type="button" class="source-btn" @click="closeProjectEditor" :disabled="sourceEditor.saving">取消</button>
+        <button type="submit" class="source-btn blue" :disabled="sourceEditor.saving">{{ sourceEditor.saving ? '正在保存…' : sourceEditor.manage ? '完成' : '创建项目' }}</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <teleport v-if="ssh.open" :to="ssh.fromFolder ? '#folder-ssh-panel' : 'body'" :disabled="!ssh.fromFolder">
+  <div class="modal-bg" @mousedown.self="closeSsh">
+    <div class="sshm" :role="ssh.fromFolder ? null : 'dialog'" :aria-modal="ssh.fromFolder ? null : 'true'" aria-labelledby="sshm-title">
       <header class="sshm-h">
         <div class="sshm-ico"><ic n="server" :s="18"></ic></div>
-        <div class="sshm-ttl"><h2 id="sshm-title">SSH 连接</h2><p>{{ ssh.project }} · 只属于这个项目，可作为任务的执行位置</p></div>
+        <div class="sshm-ttl">
+          <h2 id="sshm-title">{{ ssh.fromFolder ? (ssh.form?.id ? '编辑 SSH 连接' : '添加 SSH 连接') : 'SSH 连接' }}</h2>
+          <p>{{ ssh.fromFolder ? '保存后返回目录选择，并可在其他项目中复用' : ssh.project+' · 管理项目可用的连接' }}</p>
+        </div>
         <button type="button" class="sshm-x" @click="closeSsh" aria-label="关闭（Esc）" title="关闭（Esc）"><ic n="x" :s="16"></ic></button>
       </header>
       <div class="sshm-body" :class="{'has-list':ssh.list.length}">
@@ -482,7 +618,7 @@
 
         <form class="sshm-main sshf" v-else-if="ssh.form" @submit.prevent="saveSsh" novalidate>
           <div class="sshm-scroll">
-            <div>
+            <div v-if="!ssh.fromFolder">
               <h3>{{ ssh.form.id ? '编辑连接' : (ssh.list.length ? '新建连接' : '添加第一个 SSH 连接') }}</h3>
               <p v-if="!ssh.form.id" class="note" style="margin:4px 0 0">保存后可以一键连接、测试，并在新建任务时把「执行位置」选成这台服务器。</p>
             </div>
@@ -531,12 +667,13 @@
           <footer class="sshm-foot">
             <code class="mono sshf-prev" :title="sshPreview">{{ sshPreview }}</code>
             <button type="button" class="btn" @click="cancelSshForm">取消</button>
-            <button type="submit" class="btn primary" :disabled="ssh.busy">{{ ssh.busy ? '保存中…' : ssh.form.id ? '保存' : '添加连接' }}</button>
+            <button type="submit" class="btn primary" :disabled="ssh.busy">{{ ssh.busy ? '保存中…' : ssh.fromFolder ? '保存并浏览' : ssh.form.id ? '保存' : '添加连接' }}</button>
           </footer>
         </form>
       </div>
     </div>
   </div>
+  </teleport>
 
   <div class="pv" v-if="pv" role="dialog" aria-modal="true" :aria-label="'预览 '+pv.name">
     <div class="pv-bar">

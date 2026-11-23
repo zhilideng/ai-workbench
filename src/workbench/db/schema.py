@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     engine TEXT DEFAULT 'claude',     -- 见 engines 注册表
     use_worktree INTEGER DEFAULT 0,
     ssh_id INTEGER DEFAULT 0,         -- 执行位置：0 = 本机；否则为 ssh_conns.id
+    source_path TEXT DEFAULT '',
     workdir TEXT DEFAULT '',
     branch TEXT DEFAULT '',
     session_id TEXT DEFAULT '',
@@ -64,6 +65,10 @@ CREATE TABLE IF NOT EXISTS ssh_conns (      -- 每个项目自己的 SSH 远程�
     updated_at REAL,
     UNIQUE(project, name)
 );
+CREATE TABLE IF NOT EXISTS project_sources (
+    project TEXT PRIMARY KEY,
+    sources TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
 """
@@ -75,6 +80,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "fork_at", "TEXT DEFAULT ''"),
     ("tasks", "images", "TEXT DEFAULT '[]'"),
     ("tasks", "ssh_id", "INTEGER DEFAULT 0"),
+    ("tasks", "source_path", "TEXT DEFAULT ''"),
     ("ssh_conns", "socks_proxy", "TEXT DEFAULT ''"),
     ("ssh_conns", "auth", "TEXT DEFAULT 'key'"),
     ("ssh_conns", "remote_claude", "TEXT DEFAULT ''"),

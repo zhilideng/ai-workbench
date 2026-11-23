@@ -129,6 +129,10 @@ class SshRepo:
         return {r["project"]: r["c"] for r in q("SELECT project, COUNT(*) c FROM ssh_conns GROUP BY project")}
 
     @staticmethod
+    def folder_connections() -> list[dict]:
+        return q("SELECT id, project, name, remote_dir FROM ssh_conns ORDER BY name COLLATE NOCASE, id")
+
+    @staticmethod
     def create(project: str, fields: dict[str, Any]) -> int:
         now = time.time()
         return ex(f"INSERT INTO ssh_conns(project, {', '.join(fields)}, created_at, updated_at) "
@@ -147,3 +151,23 @@ class SshRepo:
         return q("""SELECT s.* FROM ssh_conns s WHERE EXISTS
                     (SELECT 1 FROM tasks t WHERE t.ssh_id=s.id AND COALESCE(t.engine,'claude')='claude')
                     ORDER BY s.project, s.name""")
+
+
+class ProjectSourcesRepo:
+    @staticmethod
+    def get(project: str) -> Optional[list[dict]]:
+        row = q("SELECT sources FROM project_sources WHERE project=?", (project,), one=True)
+        return json.loads(row["sources"]) if row else None
+
+    @staticmethod
+    def all() -> dict[str, list[dict]]:
+        return {r["project"]: json.loads(r["sources"]) for r in q("SELECT project, sources FROM project_sources")}
+
+    @staticmethod
+    def create(project: str, sources: list[dict]) -> None:
+        ex("INSERT INTO project_sources(project, sources) VALUES(?, ?)", (project, json.dumps(sources)))
+
+    @staticmethod
+    def save(project: str, sources: list[dict]) -> None:
+        ex("INSERT INTO project_sources(project, sources) VALUES(?, ?) "
+           "ON CONFLICT(project) DO UPDATE SET sources=excluded.sources", (project, json.dumps(sources)))

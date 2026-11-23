@@ -37,6 +37,7 @@ const app = Vue.createApp({
     },
     // 选择项目根目录（其下每个子目录是一个项目）：原生文件夹对话框；浏览器调试时退化为输入框
     async chooseProjectsRoot(){
+      if (this.sourceEditor) return;
       if (this.cfg.projects_root_locked) return alert('项目目录由环境变量 WB_PROJECTS_ROOT 指定，不能在应用内修改。');
       const path = isNative() ? await call('choose_directory', '选择项目目录')
                               : prompt('项目目录（其下每个子目录是一个项目）', this.cfg.projects_root || '');
@@ -86,19 +87,24 @@ const app = Vue.createApp({
     setInterval(()=>this.loadQuota(false), 5*60*1000);
     setInterval(async()=>{ try{ this.projects = await apiq('/api/projects'); }catch(e){} }, 30000);
     setInterval(()=>{ if (!document.hidden) this.loadProjSsh(); }, 15000);
-    nativeReady().then(v=>{ this.native=v; if (v && !this.cfg.projects_root) this.chooseProjectsRoot(); });   // 首次启动：选择项目目录
+    nativeReady().then(v=>{ this.native=v; });
     document.addEventListener('click', this.openLocalLink);
     // 文件拖到输入框以外的地方时，不要让窗口直接打开它
     ['dragover','drop'].forEach(t=>window.addEventListener(t, e=>{
       if (!e.defaultPrevented && [...(e.dataTransfer?.types||[])].includes('Files')){ e.preventDefault(); if (t==='drop') this.fileOver=''; }
     }));
-    document.addEventListener('mousedown', e=>{ if (this.pswOpen && this.$refs.psw && !this.$refs.psw.contains(e.target)) this.pswOpen=false; });
+    document.addEventListener('mousedown', e=>{
+      if (this.pswOpen && this.$refs.psw && !this.$refs.psw.contains(e.target)) this.pswOpen=false;
+      if (this.sourcesOpen && !this.$refs.sourceMenu?.contains(e.target)) this.sourcesOpen=false;
+    });
     window.addEventListener('popstate', ()=>{ if (this.sel){ this.sel=null; this.showInfo=false; this.pv=null; this.editing=null; } });
     document.addEventListener('keydown', e=>{
       const mod = e.metaKey || e.ctrlKey;
+      if (this.sourceEditor) return;
       if (mod && e.key.toLowerCase()==='n'){ e.preventDefault(); this.newTask(); }
       else if (mod && e.key.toLowerCase()==='k'){ e.preventDefault(); this.switchProject(); }
       else if (e.key==='Escape' && this.pswOpen) this.pswOpen=false;
+      else if (e.key==='Escape' && this.sourcesOpen) this.sourcesOpen=false;
       else if (e.key==='Escape' && this.sideOpen) this.sideOpen=false;
       else if (e.key==='Escape' && this.pv) this.pv=null;
       else if (e.key==='Escape' && this.ssh.open){ if (this.ssh.confirmDel||this.ssh.confirmDisc){ this.ssh.confirmDel=this.ssh.confirmDisc=null; } else if (this.ssh.form && this.ssh.list.length) this.cancelSshForm(); else this.closeSsh(); }

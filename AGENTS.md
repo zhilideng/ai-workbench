@@ -31,13 +31,14 @@
 - 项目文档与代码注释默认使用中文，命令、路径、配置键和代码标识符保持原文。
 - 不提交构建产物、缓存、日志、虚拟环境和本地数据（`build/`、`dist/`、`.venv/`、`data/`、`.devdata/` 等）。
 
-## 验证与更新本地应用
+## 日常开发验证
 
 每次迭代功能或修复问题后，必须完成以下步骤，没有验证证据时不得声称完成：
 
 1. 运行测试：`.venv/bin/python -m pytest -q`。
-2. 涉及界面时，用 `./scripts/dev_server.sh` 在浏览器里检查，或以 `.venv/bin/python -m workbench --debug` 运行源码检查。
-3. **主动更新本地应用**：运行 `./scripts/build_app.sh --install`，重新打包、安装到 `/Applications/AI Workbench.app` 并自动重新打开，方便用户立即用新版本验证。应用里有任务在执行时，脚本会等待用户确认退出，不会强制结束任务。
+2. 涉及界面时，运行 `WB_KEYCHAIN_SERVICE=workbench-ssh-dev .venv/bin/python -m workbench --debug --data-dir .devdata/desktop`，从当前源码启动 macOS 模拟桌面。每次改完重新启动模拟桌面，在原生窗口里验证本次涉及的操作。
+
+模拟桌面使用独立的测试数据目录。生成 DMG、打包或安装正式应用仅在明确要求发布、打包或安装时执行。
 
 ## 版本与 Tag
 

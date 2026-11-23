@@ -40,9 +40,11 @@ class Job:
 
 def ensure_workdir(task: dict) -> Path:
     """本机任务的工作目录：项目目录，或（勾选 worktree 时）data/worktrees/<项目>/task-N。"""
-    proj = project_path(task["project"])
     if task["workdir"] and Path(task["workdir"]).is_dir():
         return Path(task["workdir"])
+    proj = Path(task["source_path"]) if task.get("source_path") else project_path(task["project"])
+    if not proj.is_dir():
+        raise RuntimeError(f"源文件夹不存在：{proj}")
     if task["use_worktree"] and (proj / ".git").exists():
         wt = get_settings().paths.worktrees / task["project"] / f"task-{task['id']}"
         branch = f"wb/task-{task['id']}"

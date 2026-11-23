@@ -65,3 +65,131 @@ def test_frontend_served(client):
     assert 'src="js/app.js"' in html
     for path in ("/js/app.js", "/css/base.css", "/vendor/vue.global.prod.js", "/fonts/fonts.css"):
         assert client.get(path).status_code == 200, path
+
+
+def test_project_sources_pin_task_directory(client, env, tmp_path):
+    first = env.projects_root / "alpha"
+    second = tmp_path / "source folder"
+    second.mkdir()
+    payload = {"name": "自选项目", "sources": [{"path": str(first)}, {"path": str(second)}]}
+    response = client.post("/api/projects", json=payload)
+    assert response.status_code == 201, response.text
+    project = next(p for p in response.json() if p["name"] == payload["name"])
+    assert [s["path"] for s in project["sources"]] == [str(first), str(second)]
+    assert client.post("/api/projects", json=payload).status_code == 409
+
+    task = client.post("/api/tasks", json={
+        "project": project["name"], "prompt": "检查", "source_path": str(second),
+    }).json()
+    response = client.put(f"/api/projects/{project['name']}/sources", json={"sources": [{"path": str(first)}]})
+    assert response.status_code == 200 and second.is_dir()
+
+    from workbench.services.runner import ensure_workdir
+    assert ensure_workdir(task) == second
+    assert client.post("/api/tasks", json={
+        "project": project["name"], "prompt": "检查", "source_path": str(second),
+    }).status_code == 400
+
+
+def test_folder_picker_and_remote_project(client, env, monkeypatch):
+    from workbench.services import connections
+    from workbench.ssh import transport
+
+    local = client.get("/api/project-folders/local")
+    assert local.json()["folders"] == ["alpha", "beta"]
+    assert client.get("/api/project-folders/local", params={"path": str(env.projects_root / "missing")}).status_code == 404
+
+    ssh = client.post("/api/projects/alpha/ssh", json={
+        "name": "开发服务器", "host": "example.com", "remote_dir": "/srv",
+    }).json()[0]
+    assert client.get("/api/project-folders/ssh").json()[0]["id"] == ssh["id"]
+
+    async def list_folders(conn, command, *, timeout):
+        assert conn["id"] == ssh["id"]
+        assert "dir='/srv/with space'" in command
+        return 0, "空目录\0source\0", ""
+
+    monkeypatch.setattr(transport, "run", list_folders)
+    response = client.get(f"/api/project-folders/ssh/{ssh['id']}", params={"path": "/srv/with space"})
+    assert response.json()["folders"] == ["source", "空目录"]
+
+    source = {"path": "/srv/with space/source", "ssh_id": ssh["id"]}
+    assert client.post("/api/projects", json={"name": "远程项目", "sources": [source]}).status_code == 201
+    task = client.post("/api/tasks", json={
+        "project": "远程项目", "prompt": "检查", "ssh_id": ssh["id"], "source_path": source["path"],
+    }).json()
+    assert connections.of_task(task)["remote_dir"] == source["path"]
+    assert client.get(f"/api/tasks/{task['id']}").json()["ssh_project"] == "alpha"
+
+
+def test_remember_folder_and_fall_back_when_removed(client, env):
+    folder = env.projects_root / "alpha"
+    assert client.put("/api/project-folders/recent", json={"path": str(folder)}).json() == {"ok": True}
+    assert client.get("/api/project-folders/local").json()["path"] == str(folder)
+    folder.rmdir()
+    assert client.get("/api/project-folders/local").json()["path"] == str(env.projects_root)
+
+
+def test_local_folder_uses_directory_spelling(client, tmp_path):
+    folder = tmp_path / "Parent" / "Shared"
+    folder.mkdir(parents=True)
+    alias = tmp_path / "parent" / "shared"
+    response = client.get("/api/project-folders/local", params={"path": str(alias)})
+    if not alias.is_dir():
+        assert response.status_code == 404
+        return
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == str(folder)
+
+    sources = [{"path": str(folder)}, {"path": str(alias)}]
+    assert client.post("/api/projects", json={"name": "重复目录", "sources": sources}).status_code == 400
+
+
+def test_create_ssh_connection_before_project(client, monkeypatch, tmp_path):
+    import os
+    import subprocess
+
+    from workbench.ssh import transport
+
+    body = {"name": "新连接", "host": "example.com", "share_with_ai": False}
+    response = client.post("/api/ssh/folder-connections", json=body)
+    assert response.status_code == 201, response.text
+    cid = response.json()[0]["id"]
+    assert client.get("/api/project-folders/ssh").json()[0]["id"] == cid
+    assert client.get("/api/projects/alpha/ssh").json() == []
+
+    home = tmp_path / "remote"
+    source = home / "team's project"
+    (source / "子文件夹").mkdir(parents=True)
+    (source / "子文件夹" / "readme.txt").touch()
+    (source / "branch" / "line\nbreak").mkdir(parents=True)
+    (source / ".hidden").mkdir()
+    (source / "large").mkdir()
+    for index in range(65):
+        (source / "large" / f"file-{index}").touch()
+
+    async def simulated_ssh(conn, command, *, timeout):
+        assert conn["id"] == cid
+        result = subprocess.run(["/bin/sh", "-c", command], env={**os.environ, "HOME": str(home)},
+                                capture_output=True, text=True, timeout=timeout)
+        return result.returncode, result.stdout, result.stderr
+
+    monkeypatch.setattr(transport, "run", simulated_ssh)
+    response = client.get(f"/api/project-folders/ssh/{cid}", params={"path": "~/team's project"})
+    assert response.json() == {
+        "path": str(source),
+        "folders": ["branch", "large", "子文件夹"],
+        "previews": {"branch": ["line\nbreak"], "子文件夹": []},
+    }
+    response = client.get(f"/api/project-folders/ssh/{cid}", params={"path": str(source / "large")})
+    assert response.json() == {"path": str(source / "large"), "folders": []}
+
+    folder = {"path": str(source), "ssh_id": cid}
+    assert client.put("/api/project-folders/recent", json=folder).status_code == 200
+    assert client.get("/api/project-folders/ssh").json()[0]["recent_path"] == str(source)
+    response = client.post("/api/projects", json={"name": "SSH 项目", "sources": [folder]})
+    assert response.status_code == 201, response.text
+    assert client.get("/api/projects/SSH 项目/ssh").json()[0]["id"] == cid
+    response = client.put(f"/api/ssh/folder-connections/{cid}", json={**body, "name": "更名连接"})
+    assert response.json()[0]["name"] == "更名连接"
+    assert client.get("/api/projects/alpha/ssh").json() == []

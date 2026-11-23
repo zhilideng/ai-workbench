@@ -9,7 +9,7 @@ claude auth login              # 首次：确保 claude CLI 已登录（工作�
 ./scripts/build_app.sh --install   # 打包并安装到 /Applications/AI Workbench.app
 ```
 
-之后从「启动台」或「应用程序」打开 **AI Workbench**。首次启动会让你选择**项目目录**（其下每个子目录是一个项目），之后可在项目切换弹层底部或菜单「工作台 → 选择项目目录…」中修改。
+之后从「启动台」或「应用程序」打开 **AI Workbench**。在左栏点击「新建项目」，为项目关联一个或多个本机或 SSH 源文件夹。已有项目目录仍会自动识别，也可以通过菜单「工作台 → 选择项目目录…」设定。
 
 依赖：macOS 12+、Python 3.11+（仅打包时需要）。打包后的应用自带 Python 运行时，不依赖系统 Python。
 
@@ -36,12 +36,18 @@ PYTHONPATH=src .venv/bin/python -m workbench.tools.import_legacy <旧的 workben
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 git config core.hooksPath .githooks        # 启用提交前密钥检查（克隆后执行一次）
-.venv/bin/python -m workbench --debug      # 以桌面窗口运行源码（--debug 打开 Web 检查器）
-.venv/bin/python -m pytest                 # 测试
-./scripts/dev_server.sh                    # 只起本地服务，在浏览器里调前端：http://127.0.0.1:8765（数据在 ./.devdata）
-./scripts/build_app.sh                     # 打包到 dist/AI Workbench.app
-./scripts/build_app.sh --install           # 打包并替换、重新打开本地应用
-./scripts/release.sh 1.2.0 --push          # 发布新版本：改版本号、测试、提交、打 Tag v1.2.0、更新应用、推送
+.venv/bin/python -m pytest -q
+WB_KEYCHAIN_SERVICE=workbench-ssh-dev .venv/bin/python -m workbench --debug --data-dir .devdata/desktop
+```
+
+改完后重新运行最后一条命令，在 macOS 模拟桌面验证。模拟桌面使用 `.devdata/desktop` 存放数据库和设置，SSH 密码使用独立的钥匙串服务。
+
+### 打包和发布
+
+```bash
+./scripts/build_app.sh                    # 打包到 dist/AI Workbench.app
+./scripts/build_app.sh --install          # 打包并替换、重新打开正式应用
+./scripts/release.sh 1.2.0 --push          # 明确发布新版本时使用
 ```
 
 项目规范（版本 Tag、密钥、提交格式、验证流程）见 [AGENTS.md](AGENTS.md)。
@@ -90,7 +96,7 @@ tests/             接口、引擎、SSH、运行器测试
 ## 功能
 
 - **界面**：中性灰配色（跟随系统明暗）。左侧是任务列表，按 进行中 / 待验收 / 待办 / 最近 分组（分组可折叠），顶部 ⌘K 切换项目、可搜索任务，底部可展开额度。会话里每一轮的工具调用和中间输出折叠成「已工作 12s · N 个操作」，执行中自动展开，只把最终回复直接展示。
-- **项目列表**：扫描项目目录下的所有子目录，显示 git 分支、未提交改动、是否有 CLAUDE.md。
+- **项目列表与源文件夹**：新建项目时可以浏览本机或 SSH 目录，也可以粘贴路径直达。选择源文件夹后会自动填入空白项目名。SSH 连接可以在目录选择器中添加并复用。看板顶部可以切换新任务的默认源文件夹，也可以更改或移除关联。源文件保留在原位置，已配置的项目目录下的子目录仍会显示。
 - **任务看板**：待办 → 执行中 → 待验收 → 已完成 / 失败。新建任务只有一个输入框，写的内容原样作为提示词发给 AI，第一行作为标题。
 - **执行**：`claude -p <prompt> --output-format stream-json --permission-mode <mode>`，工作目录为项目目录，日志存于数据目录的 `runs/run-N.jsonl`，界面实时展示文本、工具调用和结果。
 - **本地文件**：AI 回复里引用的本地图片 / SVG 直接显示；文件链接用系统默认应用打开（如「预览」）。只允许读任务工作目录和项目目录内的文件。

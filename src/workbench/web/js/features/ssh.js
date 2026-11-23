@@ -3,11 +3,22 @@ import {apiq} from '../core/api.js';
 
 export default {
   data(){ return {
-      projSsh:[], ssh:{open:false, project:'', list:[], sel:null, mode:'view', form:null, tests:{}, hosts:[], busy:false, err:'', bad:{}, act:{}, confirmDel:null, confirmDisc:null},
+      projSsh:[], ssh:{open:false, fromFolder:false, project:'', list:[], sel:null, mode:'view', form:null, tests:{}, hosts:[], busy:false, err:'', bad:{}, act:{}, confirmDel:null, confirmDisc:null},
   }; },
   computed:{
     curSsh(){ return this.ssh.list.find(c=>c.id===this.ssh.sel) || null; },
-    selSsh(){ return this.draft.ssh_id>0 ? this.projSsh.find(c=>c.id===this.draft.ssh_id) || null : null; },
+    executionConnections(){
+      const connections=new Map(this.projSsh.map(c=>[c.id,c]));
+      const sources=[this.activeSource,...this.projectSources].filter(s=>s?.ssh_id && s.available);
+      for (const s of sources){
+        const c=connections.get(s.ssh_id);
+        if (!c || s===this.activeSource){
+          connections.set(s.ssh_id,{...c,id:s.ssh_id,name:s.connection,project:s.ssh_project,remote_dir:s.path});
+        }
+      }
+      return [...connections.values()];
+    },
+    selSsh(){ return this.executionConnections.find(c=>c.id===this.draft.ssh_id) || null; },
     // 表单里实时预览生成的 ssh 命令（与后端 ssh_command 的拼法一致，仅作展示）
     sshPreview(){
       const f=this.ssh.form; if (!f || !f.host) return 'ssh …';
@@ -25,7 +36,7 @@ export default {
   methods:{
     async openSsh(selId){
       const p=this.cur; if (!p) return;
-      Object.assign(this.ssh, {open:true, project:p, list:[], sel:null, mode:'view', form:null, tests:{}, err:'', bad:{}, act:{}, confirmDel:null, confirmDisc:null, busy:false});
+      Object.assign(this.ssh, {open:true, fromFolder:false, project:p, list:[], sel:null, mode:'view', form:null, tests:{}, err:'', bad:{}, act:{}, confirmDel:null, confirmDisc:null, busy:false});
       try{
         const [list, hosts] = await Promise.all([apiq(this.sshUrl()), apiq('/api/ssh/config-hosts')]);
         this.ssh.list=list; this.ssh.hosts=hosts;
@@ -33,8 +44,36 @@ export default {
         else this.newSsh();
       }catch(e){ this.ssh.err=e.message; }
     },
-    closeSsh(){ this.ssh.open=false; this.ssh.form=null; },
-    sshUrl(id, project){ return `/api/projects/${encodeURIComponent(project||this.ssh.project)}/ssh`+(id ? '/'+id : ''); },
+    async openFolderSsh(id){
+      const picker=this.folderPicker;
+      if (!picker || this.ssh.open) return;
+      let connection;
+      if (id){
+        try{
+          const list=await apiq(this.sshUrl(null,''));
+          connection=list.find(c=>c.id===id);
+          if (!connection) throw new Error('SSH 连接不存在');
+        }catch(e){ picker.pathError=e.message; return; }
+      }
+      if (this.folderPicker!==picker || this.ssh.open) return;
+      Object.assign(this.ssh,{open:true,fromFolder:true,project:'',list:[],hosts:[],busy:false});
+      if (connection) this.editSsh(connection);
+      else this.newSsh();
+      try{
+        const hosts=await apiq('/api/ssh/config-hosts');
+        if (this.ssh.fromFolder) this.ssh.hosts=hosts;
+      }catch(e){}
+    },
+    closeSsh(){
+      const fromFolder=this.ssh.fromFolder;
+      if (fromFolder && this.ssh.busy) return;
+      Object.assign(this.ssh,{open:false,fromFolder:false,form:null});
+      if (fromFolder) this.$nextTick(()=>this.$refs.folderTitle?.focus());
+    },
+    sshUrl(id, project=this.ssh.project){
+      const base=project ? `/api/projects/${encodeURIComponent(project)}/ssh` : '/api/ssh/folder-connections';
+      return base+(id ? '/'+id : '');
+    },
     async loadProjSsh(){
       const p=this.cur; if (!p){ this.projSsh=[]; return; }
       try{ const l=await apiq(`/api/projects/${encodeURIComponent(p)}/ssh`); if (this.cur===p) this.projSsh=l; }catch(e){}
@@ -42,7 +81,7 @@ export default {
     sshLabel(c){ return c.name+' · '+(c.remote_dir||'~'); },
     setSshList(list){
       this.ssh.list=list;
-      if (this.ssh.project===this.cur){ this.projSsh=list; if (this.draft.ssh_id>0 && !list.some(c=>c.id===this.draft.ssh_id)) this.draft.ssh_id=0; }
+      if (this.ssh.project===this.cur) this.projSsh=list;
       const p=this.projects.find(x=>x.name===this.ssh.project); if (p) p.ssh_count=list.length;
     },
     resetSshUi(){ Object.assign(this.ssh, {err:'', bad:{}, confirmDel:null, confirmDisc:null}); },
@@ -50,7 +89,7 @@ export default {
     newSsh(){
       this.resetSshUi();
       this.ssh.mode='new';
-      this.ssh.form={id:null, name:'', host:'', user:'', port:'', identity_file:'', proxy_jump:'', socks_proxy:'', remote_dir:'', note:'', share_with_ai:true,
+      this.ssh.form={id:null, name:'', host:'', user:'', port:'', identity_file:'', proxy_jump:'', socks_proxy:'', remote_dir:'', note:'', share_with_ai:!this.ssh.fromFolder,
                      auth:'key', password:'', has_password:false, remote_claude:'', remote_codex:'', allow_root_bypass:false};
       this.$nextTick(()=>this.$refs.sshFirst && this.$refs.sshFirst.focus());
     },
@@ -67,6 +106,7 @@ export default {
       this.selectSsh(this.ssh.form && this.ssh.form.id || this.ssh.sel || this.ssh.list[0].id);
     },
     async saveSsh(){
+      if (this.ssh.busy) return;
       const f=this.ssh.form;
       const bad={name:!f.name.trim(), host:!f.host.trim(), password:f.auth==='password' && !f.has_password && !f.password};
       this.ssh.bad=bad;
@@ -77,8 +117,15 @@ export default {
       this.ssh.busy=true; this.ssh.err='';
       try{
         const list=await apiq(this.sshUrl(id), {method:id?'PUT':'POST', body});
-        this.setSshList(list);
         const saved = id ? list.find(c=>c.id===id) : list.find(c=>c.name===body.name.trim());
+        if (this.ssh.fromFolder){
+          this.ssh.busy=false;
+          this.closeSsh();
+          this.folderPicker.sshId=saved.id;
+          this.initFolderPicker();
+          return;
+        }
+        this.setSshList(list);
         if (id) delete this.ssh.tests[id];
         this.selectSsh(saved ? saved.id : list[0].id);
       }catch(e){ this.ssh.err=e.message; toTop(); } finally{ this.ssh.busy=false; }
@@ -87,6 +134,8 @@ export default {
       try{
         const list=await apiq(this.sshUrl(c.id), {method:'DELETE'});
         this.setSshList(list);
+        this.projects=await apiq('/api/projects');
+        if (!this.selSsh) this.draft.ssh_id=0;
         if (list.length) this.selectSsh(list[0].id); else this.newSsh();
       }catch(e){ this.ssh.confirmDel=null; this.ssh.err=e.message; }
     },
@@ -111,7 +160,7 @@ export default {
     },
     // 弹窗外（输入框、任务页）操作连接后同步各处状态
     applySshList(list, project){
-      const p=project||this.ssh.project;
+      const p=project??this.ssh.project;
       if (this.ssh.open && p===this.ssh.project) this.setSshList(list);
       if (p===this.cur) this.projSsh=list;
       if (this.sel && this.sel.ssh_id){ const c=list.find(x=>x.id===this.sel.ssh_id); if (c) this.sel.ssh_connected=c.connected; }
@@ -120,12 +169,12 @@ export default {
     async disconnectFromTask(){
       const t=this.sel; if (!t || !t.ssh_id) return;
       if (this.isActive(t) && !confirm(`这个任务正在服务器上执行，断开会停止它。继续？`)) return;
-      await this.disconnectSsh({id:t.ssh_id}, t.project);
+      await this.disconnectSsh({id:t.ssh_id}, t.ssh_project ?? t.project);
       await this.openTask(t.id);
     },
     async connectFromTask(){
       const t=this.sel; if (!t || !t.ssh_id) return;
-      await this.connectSsh({id:t.ssh_id}, t.project);
+      await this.connectSsh({id:t.ssh_id}, t.ssh_project ?? t.project);
     },
   },
 };

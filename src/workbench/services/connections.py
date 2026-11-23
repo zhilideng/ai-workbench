@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from workbench.core.errors import BadRequest, Conflict, NotFound, UpstreamError, WorkbenchError
 from workbench.core.shell import IS_MAC
-from workbench.db.repositories import SshRepo, TaskRepo
-from workbench.services.projects import project_path
+from workbench.db.repositories import ProjectSourcesRepo, SshRepo, TaskRepo
+from workbench.services.projects import project_sources
 from workbench.ssh import commands as cmds
 from workbench.ssh import keychain, transport
 
@@ -81,6 +81,9 @@ def validate(raw: dict[str, Any]) -> tuple[dict, Optional[str]]:
 
 def get(project: str, cid: int) -> dict:
     c = SshRepo.get(cid, project)
+    if not c and project:
+        if any(s["ssh_id"] == cid for s in ProjectSourcesRepo.get(project) or []):
+            c = SshRepo.get(cid, "")
     if not c:
         raise NotFound("连接不存在")
     return c
@@ -90,14 +93,24 @@ def of_task(task: dict) -> Optional[dict]:
     """任务的执行位置：None = 本机。"""
     if not task.get("ssh_id"):
         return None
-    c = SshRepo.get(task["ssh_id"], task["project"])
+    path = task.get("source_path")
+    c = SshRepo.get(task["ssh_id"], None if path else task["project"])
     if not c:
         raise RuntimeError("任务使用的 SSH 连接已被删除")
-    return c
+    return {**c, "remote_dir": path} if path else c
+
+
+def _project_connections(project: str) -> list[dict]:
+    rows = SshRepo.of_project(project)
+    if project:
+        linked = {s["ssh_id"] for s in ProjectSourcesRepo.get(project) or []}
+        if linked:
+            rows += [r for r in SshRepo.of_project("") if r["id"] in linked]
+    return rows
 
 
 def list_for(project: str) -> list[dict]:
-    rows = SshRepo.of_project(project)
+    rows = _project_connections(project)
     for r in rows:
         r["share_with_ai"] = bool(r["share_with_ai"])
         r["allow_root_bypass"] = bool(r["allow_root_bypass"])
@@ -111,7 +124,7 @@ def list_for(project: str) -> list[dict]:
 
 def ai_context(project: str) -> str:
     """给 AI 的说明：本项目可用的 SSH 连接。没有可共享的连接时返回空串。"""
-    rows = [r for r in SshRepo.of_project(project) if r["share_with_ai"]]
+    rows = [r for r in _project_connections(project) if r["share_with_ai"]]
     if not rows:
         return ""
     lines = ["本项目在工作台里配置了以下 SSH 远程连接（需要操作远程服务器时使用；请原样使用给出的命令前缀，"
@@ -144,7 +157,8 @@ def config_hosts() -> list[str]:
 # ---------------------------------------------------------------- 增删改
 
 def create(project: str, raw: dict) -> list[dict]:
-    project_path(project)
+    if project:
+        project_sources(project)
     d, password = validate(raw)
     if d["auth"] == "password" and not password:
         raise BadRequest("请填写密码")
