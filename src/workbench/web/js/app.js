@@ -80,13 +80,13 @@ const app = Vue.createApp({
   async mounted(){
     await this.loadAll();
     if (this.cur && !this.curProject) this.cur='';
-    this.loadProjSsh();
+    this.loadSshConnections();
     this.$refs.promptInput && this.$refs.promptInput.focus();
     this.timer = setInterval(this.tick, 1500);
     this.loadQuota(false);
     setInterval(()=>this.loadQuota(false), 5*60*1000);
     setInterval(async()=>{ try{ this.projects = await apiq('/api/projects'); }catch(e){} }, 30000);
-    setInterval(()=>{ if (!document.hidden) this.loadProjSsh(); }, 15000);
+    setInterval(()=>{ if (!document.hidden) this.loadSshConnections(); }, 15000);
     nativeReady().then(v=>{ this.native=v; });
     document.addEventListener('click', this.openLocalLink);
     // 文件拖到输入框以外的地方时，不要让窗口直接打开它

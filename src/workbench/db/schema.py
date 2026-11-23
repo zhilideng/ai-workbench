@@ -44,9 +44,9 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at REAL,
     ended_at REAL
 );
-CREATE TABLE IF NOT EXISTS ssh_conns (      -- 每个项目自己的 SSH 远程连接（只存连接信息，不存密码）
+CREATE TABLE IF NOT EXISTS ssh_conns (      -- 工作台共享的 SSH 远程连接（密码存在钥匙串）
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project TEXT NOT NULL,
+    project TEXT NOT NULL,           -- 来源项目，用于 AI 上下文；从目录选择器添加时为空
     name TEXT NOT NULL,
     host TEXT NOT NULL,               -- 主机名 / IP，或 ~/.ssh/config 里的 Host 别名
     port INTEGER DEFAULT 0,           -- 0 = 默认（22 或 ssh config）

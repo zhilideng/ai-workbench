@@ -141,7 +141,6 @@ def scan_projects() -> list[dict]:
             if entry.name not in saved and (path := _legacy_path(entry.name)) is not None:
                 saved[entry.name] = [{"path": str(path), "ssh_id": 0}]
     counts = TaskRepo.status_counts()
-    ssh_counts = SshRepo.counts()
     connections = {c["id"]: c for c in SshRepo.folder_connections()}
     out = []
     for name, sources in sorted(saved.items(), key=lambda item: item[0].casefold()):
@@ -158,8 +157,7 @@ def scan_projects() -> list[dict]:
             "is_git": primary.get("is_git", False), "branch": primary.get("branch", ""),
             "dirty": primary.get("dirty", 0), "has_claude_md": primary.get("has_claude_md", False),
             "mtime": mtime, "task_counts": counts.get(name, {}),
-            "ssh_count": ssh_counts.get(name, 0) + len({s["ssh_id"] for s in sources
-                                                        if s["ssh_id"] and s["available"] and not s["ssh_project"]}),
+            "ssh_count": len(connections),
         })
     return out
 

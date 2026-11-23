@@ -82,8 +82,8 @@ async def create_task(runner: Runner, *, project: str, prompt: str, title: str =
     _check_effort(effort)
     imgs = uploads.validate(images or [])
     if ssh_id:
-        if not SshRepo.get(ssh_id, None if source_path else project):
-            raise BadRequest("SSH 连接不存在或不属于该项目")
+        if not SshRepo.get(ssh_id):
+            raise BadRequest("SSH 连接不存在")
         use_worktree = False  # 远程任务直接在远程目录里执行
     tid = TaskRepo.create(project=project, kind="task", title=title.strip() or derive_title(prompt), description=prompt,
                           priority="", permission_mode=permission_mode, model=model, effort=effort,

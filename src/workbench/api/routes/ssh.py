@@ -16,7 +16,7 @@ def config_hosts():
 
 @router.get("/ssh/folder-connections")
 def list_folder_connections():
-    return connections.list_for("")
+    return connections.list_connections()
 
 
 @router.post("/ssh/folder-connections", status_code=201)
@@ -26,23 +26,23 @@ def create_folder_connection(body: SshIn):
 
 @router.put("/ssh/folder-connections/{cid}")
 def update_folder_connection(cid: int, body: SshIn):
-    return connections.update("", cid, body.model_dump())
+    return connections.update(cid, body.model_dump())
 
 
 @router.post("/ssh/folder-connections/{cid}/connect")
 async def connect_folder_connection(cid: int):
-    return await connections.connect("", cid)
+    return await connections.connect(cid)
 
 
 @router.post("/ssh/folder-connections/{cid}/disconnect")
 async def disconnect_folder_connection(cid: int, runner: Runner = Depends(get_runner)):
-    return await connections.disconnect("", cid, runner)
+    return await connections.disconnect(cid, runner)
 
 
 @router.get("/projects/{name}/ssh")
 def list_ssh(name: str):
     project_sources(name)
-    return connections.list_for(name)
+    return connections.list_connections()
 
 
 @router.post("/projects/{name}/ssh")
@@ -52,29 +52,35 @@ def create_ssh(name: str, body: SshIn):
 
 @router.put("/projects/{name}/ssh/{cid}")
 def update_ssh(name: str, cid: int, body: SshIn):
-    return connections.update(name, cid, body.model_dump())
+    project_sources(name)
+    return connections.update(cid, body.model_dump())
 
 
 @router.delete("/projects/{name}/ssh/{cid}")
 def delete_ssh(name: str, cid: int):
-    return connections.delete(name, cid)
+    project_sources(name)
+    return connections.delete(cid)
 
 
 @router.post("/projects/{name}/ssh/{cid}/test")
 async def test_ssh(name: str, cid: int):
-    return await connections.test(name, cid)
+    project_sources(name)
+    return await connections.test(cid)
 
 
 @router.post("/projects/{name}/ssh/{cid}/connect")
 async def connect_ssh(name: str, cid: int):
-    return await connections.connect(name, cid)
+    project_sources(name)
+    return await connections.connect(cid)
 
 
 @router.post("/projects/{name}/ssh/{cid}/disconnect")
 async def disconnect_ssh(name: str, cid: int, runner: Runner = Depends(get_runner)):
-    return await connections.disconnect(name, cid, runner)
+    project_sources(name)
+    return await connections.disconnect(cid, runner)
 
 
 @router.post("/projects/{name}/ssh/{cid}/open")
 def open_ssh(name: str, cid: int):
-    return connections.open_in_terminal(name, cid)
+    project_sources(name)
+    return connections.open_in_terminal(cid)

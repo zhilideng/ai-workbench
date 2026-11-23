@@ -179,7 +179,7 @@
               <button type="button" class="source-menu-manage" @click="openProjectEditor(true,$refs.sourceMenu.firstElementChild)"><ic n="settings" :s="16"></ic>管理源文件夹</button>
             </div>
           </div>
-          <button v-if="curProject" class="btn ghost hide-m" @click="openSsh" title="管理本项目的 SSH 远程连接"><ic n="server" :s="14"></ic>SSH<span v-if="curProject.ssh_count" class="count">{{ curProject.ssh_count }}</span></button>
+          <button v-if="curProject" class="btn ghost hide-m" @click="openSsh" title="管理共享 SSH 连接"><ic n="server" :s="14"></ic>SSH<span v-if="sshConnections.length" class="count">{{ sshConnections.length }}</span></button>
           <div class="seg" role="group" aria-label="视图">
             <button :class="{on:view==='board'}" :aria-pressed="view==='board'" @click="view='board'" title="看板"><ic n="board" :s="13"></ic><span class="hide-m">看板</span></button>
             <button :class="{on:view==='list'}" :aria-pressed="view==='list'" @click="view='list'" title="列表"><ic n="list" :s="13"></ic><span class="hide-m">列表</span></button>
@@ -390,7 +390,7 @@
               <option v-for="c in executionConnections" :key="c.id" :value="c.id">{{ sshLabel(c) }}</option>
               <option :value="-1">管理 SSH 连接…</option></select><ic class="chev" n="chevd" :s="11"></ic>
             <span v-if="selSsh" class="sdot" :class="{on:selSsh.connected, busy:ssh.act[selSsh.id]}" :title="selSsh.connected?'已连接':'未连接（发送任务时自动连接）'"></span></label>
-          <button v-if="selSsh && selSsh.connected" type="button" class="loc-disc" @click="disconnectSsh(selSsh, selSsh.project || cur)" :disabled="!!ssh.act[selSsh.id]" title="断开与这台服务器的连接">{{ ssh.act[selSsh.id] ? '断开中…' : '断开' }}</button>
+          <button v-if="selSsh && selSsh.connected" type="button" class="loc-disc" @click="disconnectSsh(selSsh)" :disabled="!!ssh.act[selSsh.id]" title="断开与这台服务器的连接">{{ ssh.act[selSsh.id] ? '断开中…' : '断开' }}</button>
           <label class="ctl" :title="modeOf(draft.engine, draft.permission_mode).d"><ic n="shield" :s="13"></ic><span class="sr">权限</span>
             <select v-model="draft.permission_mode"><option v-for="m in modesFor(draft.engine)" :value="m.v" :key="m.v">{{ m.s }}</option></select><ic class="chev" n="chevd" :s="11"></ic></label>
           <button type="button" v-if="executionSource?.is_git" class="toggle" :class="{on:draft.use_worktree}" :aria-pressed="draft.use_worktree"
@@ -448,10 +448,11 @@
         <div class="folder-browser" :class="{'folder-remote':folderPicker.mode==='ssh' && folderPicker.connections.length}">
           <div class="folder-connections" v-if="folderPicker.mode==='ssh' && folderPicker.connections.length">
             <strong>连接</strong>
-            <button type="button" v-for="c in folderPicker.connections" :key="c.id" :aria-pressed="c.id===folderPicker.sshId" @click="selectFolderConnection(c.id)"><ic n="server" :s="16"></ic><span class="ell">{{ c.name }}</span></button>
+            <div class="folder-connection-row" v-for="c in folderPicker.connections" :key="c.id">
+              <button type="button" :aria-pressed="c.id===folderPicker.sshId" :title="c.name" @click="selectFolderConnection(c.id)"><ic n="server" :s="16"></ic><span class="ell">{{ c.name }}</span></button>
+              <button type="button" class="folder-connection-edit" :aria-label="'编辑 SSH 连接 '+c.name" :title="'编辑 '+c.name" @click="openFolderSsh(c.id)"><ic n="edit" :s="14"></ic></button>
+            </div>
             <button type="button" class="folder-connection-action" @click="openFolderSsh()"><ic n="plus" :s="14"></ic>添加 SSH 连接</button>
-            <button v-if="folderPicker.connections.some(c=>c.id===folderPicker.sshId && c.project==='')" type="button" class="folder-connection-action"
-              @click="openFolderSsh(folderPicker.sshId)"><ic n="edit" :s="14"></ic>编辑当前连接</button>
           </div>
           <div class="folder-tree-box">
             <label class="folder-search"><ic n="search" :s="17"></ic><input type="search" v-model="folderPicker.query" placeholder="搜索文件夹..." aria-label="搜索文件夹"></label>
@@ -549,7 +550,7 @@
         <div class="sshm-ico"><ic n="server" :s="18"></ic></div>
         <div class="sshm-ttl">
           <h2 id="sshm-title">{{ ssh.fromFolder ? (ssh.form?.id ? '编辑 SSH 连接' : '添加 SSH 连接') : 'SSH 连接' }}</h2>
-          <p>{{ ssh.fromFolder ? '保存后返回目录选择，并可在其他项目中复用' : ssh.project+' · 管理项目可用的连接' }}</p>
+          <p>{{ ssh.fromFolder ? '保存后返回目录选择，连接供所有项目使用' : '管理所有项目共用的连接' }}</p>
         </div>
         <button type="button" class="sshm-x" @click="closeSsh" aria-label="关闭（Esc）" title="关闭（Esc）"><ic n="x" :s="16"></ic></button>
       </header>
@@ -602,7 +603,7 @@
           </div>
           <footer class="sshm-foot">
             <template v-if="ssh.confirmDel===curSsh.id">
-              <span class="note" style="flex:1;color:var(--fail-ink)">删除「{{ curSsh.name }}」？{{ curSsh.has_password ? '钥匙串里的密码也会删除。' : '' }}</span>
+              <span class="note" style="flex:1;color:var(--fail-ink)">删除「{{ curSsh.name }}」？所有项目都将失去这条连接。{{ curSsh.has_password ? '钥匙串里的密码也会删除。' : '' }}</span>
               <button type="button" class="btn" @click="ssh.confirmDel=null">取消</button>
               <button type="button" class="btn danger-solid" @click="delSsh(curSsh)">删除</button>
             </template>
@@ -658,7 +659,7 @@
 
             <div class="sshf-sec"><div class="lg">AI</div>
               <label class="switch"><input type="checkbox" v-model="ssh.form.share_with_ai"><span class="sw"></span>
-                <span class="sw-t"><b>告诉本机任务的 AI</b><small>在本机执行的任务会附上这条连接（不含密码），AI 需要时可以 ssh 过去</small></span></label>
+                <span class="sw-t"><b>告诉本机任务的 AI</b><small>相应项目的本机任务会附上这条连接（不含密码），AI 需要时可以 ssh 过去</small></span></label>
               <label class="switch danger"><input type="checkbox" v-model="ssh.form.allow_root_bypass"><span class="sw"></span>
                 <span class="sw-t"><b>允许以 root 全部放行</b><small>远程 Claude 选「全部放行」时以 IS_SANDBOX=1 启动，AI 将拥有服务器的完全 root 权限。仅建议用于可重建的测试机</small></span></label>
               <label class="fld"><span>说明</span><textarea v-model="ssh.form.note" maxlength="500" rows="2" placeholder="用途、注意事项（会一起告诉 AI），如：生产环境，只读排查"></textarea></label>

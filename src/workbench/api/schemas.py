@@ -15,7 +15,7 @@ class TaskIn(BaseModel):
     model: str = ""
     effort: str = ""
     use_worktree: bool = False
-    ssh_id: int = 0                   # 执行位置：0 = 本机；否则为本项目的 SSH 连接 id
+    ssh_id: int = 0                   # 执行位置：0 = 本机；否则为共享 SSH 连接 id
     source_path: str = ""
     run_now: bool = False
     images: list[str] = []

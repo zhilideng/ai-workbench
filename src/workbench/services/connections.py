@@ -1,4 +1,4 @@
-"""项目的 SSH 连接：校验、增删改查、测试、连接 / 断开、在终端打开、给 AI 的说明。"""
+"""共享 SSH 连接：校验、增删改查、测试、连接 / 断开、在终端打开、给 AI 的说明。"""
 from __future__ import annotations
 
 import asyncio
@@ -79,11 +79,8 @@ def validate(raw: dict[str, Any]) -> tuple[dict, Optional[str]]:
 
 # ---------------------------------------------------------------- 查询
 
-def get(project: str, cid: int) -> dict:
-    c = SshRepo.get(cid, project)
-    if not c and project:
-        if any(s["ssh_id"] == cid for s in ProjectSourcesRepo.get(project) or []):
-            c = SshRepo.get(cid, "")
+def get(cid: int) -> dict:
+    c = SshRepo.get(cid)
     if not c:
         raise NotFound("连接不存在")
     return c
@@ -94,13 +91,14 @@ def of_task(task: dict) -> Optional[dict]:
     if not task.get("ssh_id"):
         return None
     path = task.get("source_path")
-    c = SshRepo.get(task["ssh_id"], None if path else task["project"])
+    c = SshRepo.get(task["ssh_id"])
     if not c:
         raise RuntimeError("任务使用的 SSH 连接已被删除")
     return {**c, "remote_dir": path} if path else c
 
 
-def _project_connections(project: str) -> list[dict]:
+def _ai_connections(project: str) -> list[dict]:
+    # 共享连接的管理权与自动附加到任务提示词的范围独立。
     rows = SshRepo.of_project(project)
     if project:
         linked = {s["ssh_id"] for s in ProjectSourcesRepo.get(project) or []}
@@ -109,8 +107,8 @@ def _project_connections(project: str) -> list[dict]:
     return rows
 
 
-def list_for(project: str) -> list[dict]:
-    rows = _project_connections(project)
+def list_connections() -> list[dict]:
+    rows = SshRepo.list_all()
     for r in rows:
         r["share_with_ai"] = bool(r["share_with_ai"])
         r["allow_root_bypass"] = bool(r["allow_root_bypass"])
@@ -124,7 +122,7 @@ def list_for(project: str) -> list[dict]:
 
 def ai_context(project: str) -> str:
     """给 AI 的说明：本项目可用的 SSH 连接。没有可共享的连接时返回空串。"""
-    rows = [r for r in _project_connections(project) if r["share_with_ai"]]
+    rows = [r for r in _ai_connections(project) if r["share_with_ai"]]
     if not rows:
         return ""
     lines = ["本项目在工作台里配置了以下 SSH 远程连接（需要操作远程服务器时使用；请原样使用给出的命令前缀，"
@@ -172,11 +170,11 @@ def create(project: str, raw: dict) -> list[dict]:
         except Exception:
             SshRepo.delete(cid)
             raise
-    return list_for(project)
+    return list_connections()
 
 
-def update(project: str, cid: int, raw: dict) -> list[dict]:
-    old = get(project, cid)
+def update(cid: int, raw: dict) -> list[dict]:
+    old = get(cid)
     d, password = validate(raw)
     if d["auth"] == "password" and not password and not keychain.has_password(cid):
         raise BadRequest("请填写密码")
@@ -188,27 +186,26 @@ def update(project: str, cid: int, raw: dict) -> list[dict]:
         keychain.set_password(cid, password)
     elif d["auth"] == "key":  # 改回密钥登录：不再保留密码
         keychain.delete_password(cid)
-    new = get(project, cid)
-    if any(old[k] != new[k] for k in _CONN_KEYS) or password:
+    if any(old[k] != d[k] for k in _CONN_KEYS) or password:
         transport.disconnect(old)
-    return list_for(project)
+    return list_connections()
 
 
-def delete(project: str, cid: int) -> list[dict]:
-    c = get(project, cid)
+def delete(cid: int) -> list[dict]:
+    c = get(cid)
     if TaskRepo.active_on_conn(cid):
         raise Conflict("有任务正在这台服务器上执行，先停止或断开连接")
     transport.disconnect(c)
     SshRepo.delete(cid)
     keychain.delete_password(cid)
-    return list_for(project)
+    return list_connections()
 
 
 # ---------------------------------------------------------------- 操作
 
-async def test(project: str, cid: int) -> dict:
+async def test(cid: int) -> dict:
     """非交互地连一次（不会弹密码、不会自动信任新主机指纹），顺带检查服务器上有没有 claude / codex。"""
-    c = get(project, cid)
+    c = get(cid)
     t0 = time.time()
     try:
         code, out, err = await transport.run(c, cmds.probe_cmd(c), timeout=30)
@@ -230,18 +227,18 @@ async def test(project: str, cid: int) -> dict:
     return {"ok": True, "ms": ms, "message": "；".join(parts), "clis": has, "dir_ok": "wb-dir" in lines}
 
 
-async def connect(project: str, cid: int) -> list[dict]:
-    c = get(project, cid)
+async def connect(cid: int) -> list[dict]:
+    c = get(cid)
     try:
         await transport.connect(c)
     except RuntimeError as e:
         raise UpstreamError(f"连接失败：{e}")
-    return list_for(project)
+    return list_connections()
 
 
-async def disconnect(project: str, cid: int, runner: "Runner") -> list[dict]:
+async def disconnect(cid: int, runner: "Runner") -> list[dict]:
     """断开：先停止正在这台服务器上执行的任务（连同服务器上的 CLI 进程），再关闭主连接。"""
-    c = get(project, cid)
+    c = get(cid)
     for t in TaskRepo.active_on_conn(cid):
         await runner.kill_remote_now(t["id"])  # 趁主连接还在，先结束服务器上的进程
         try:
@@ -249,12 +246,12 @@ async def disconnect(project: str, cid: int, runner: "Runner") -> list[dict]:
         except Conflict:
             pass
     await asyncio.to_thread(transport.disconnect, c)
-    return list_for(project)
+    return list_connections()
 
 
-def open_in_terminal(project: str, cid: int) -> dict:
+def open_in_terminal(cid: int) -> dict:
     """在 macOS「终端」里打开这个连接。"""
-    c = get(project, cid)
+    c = get(cid)
     if not IS_MAC:
         raise BadRequest("只支持 macOS，请复制命令到终端执行")
     cmd = cmds.interactive_command(c).replace("\\", "\\\\").replace('"', '\\"')

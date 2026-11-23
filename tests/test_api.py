@@ -51,6 +51,35 @@ def test_ssh_crud(client):
     assert client.delete(f"/api/projects/alpha/ssh/{cid}").json() == []
 
 
+def test_ssh_connection_is_shared_between_projects(client):
+    from workbench.services.connections import ai_context
+
+    body = {"name": "共享测试连接", "host": "example.com", "remote_dir": "/srv/app"}
+    created = client.post("/api/projects/alpha/ssh", json=body)
+    assert created.status_code == 200, created.text
+    cid = created.json()[0]["id"]
+    assert [c["id"] for c in client.get("/api/projects/beta/ssh").json()] == [cid]
+    assert [p["ssh_count"] for p in client.get("/api/projects").json()] == [1, 1]
+    assert "example.com" in ai_context("alpha")
+    assert ai_context("beta") == ""
+
+    updated = client.put(f"/api/ssh/folder-connections/{cid}", json={**body, "name": "目录中更名"})
+    assert updated.status_code == 200, updated.text
+    assert client.get("/api/project-folders/ssh").json()[0]["name"] == "目录中更名"
+    assert client.get("/api/projects/beta/ssh").json()[0]["name"] == "目录中更名"
+
+    updated = client.put(f"/api/projects/beta/ssh/{cid}", json={**body, "host": "updated.example.com"})
+    assert updated.status_code == 200, updated.text
+    assert client.get("/api/projects/alpha/ssh").json()[0]["host"] == "updated.example.com"
+
+    task = client.post("/api/tasks", json={"project": "beta", "prompt": "检查", "ssh_id": cid})
+    assert task.status_code == 200, task.text
+    detail = client.get(f"/api/tasks/{task.json()['id']}").json()
+    assert detail["ssh_target"] == "updated.example.com"
+    assert client.delete(f"/api/projects/beta/ssh/{cid}").json() == []
+    assert client.get("/api/projects/alpha/ssh").json() == []
+
+
 def test_settings_change_root(client, tmp_path):
     other = tmp_path / "other"
     (other / "gamma").mkdir(parents=True)
@@ -156,7 +185,7 @@ def test_create_ssh_connection_before_project(client, monkeypatch, tmp_path):
     assert response.status_code == 201, response.text
     cid = response.json()[0]["id"]
     assert client.get("/api/project-folders/ssh").json()[0]["id"] == cid
-    assert client.get("/api/projects/alpha/ssh").json() == []
+    assert client.get("/api/projects/alpha/ssh").json()[0]["id"] == cid
 
     home = tmp_path / "remote"
     source = home / "team's project"
@@ -192,4 +221,4 @@ def test_create_ssh_connection_before_project(client, monkeypatch, tmp_path):
     assert client.get("/api/projects/SSH 项目/ssh").json()[0]["id"] == cid
     response = client.put(f"/api/ssh/folder-connections/{cid}", json={**body, "name": "更名连接"})
     assert response.json()[0]["name"] == "更名连接"
-    assert client.get("/api/projects/alpha/ssh").json() == []
+    assert client.get("/api/projects/alpha/ssh").json()[0]["name"] == "更名连接"

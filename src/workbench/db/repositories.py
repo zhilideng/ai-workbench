@@ -115,18 +115,16 @@ class RunRepo:
 
 class SshRepo:
     @staticmethod
-    def get(conn_id: int, project: Optional[str] = None) -> Optional[dict]:
-        if project is None:
-            return q("SELECT * FROM ssh_conns WHERE id=?", (conn_id,), one=True)
-        return q("SELECT * FROM ssh_conns WHERE id=? AND project=?", (conn_id, project), one=True)
+    def get(conn_id: int) -> Optional[dict]:
+        return q("SELECT * FROM ssh_conns WHERE id=?", (conn_id,), one=True)
 
     @staticmethod
     def of_project(project: str) -> list[dict]:
         return q("SELECT * FROM ssh_conns WHERE project=? ORDER BY name COLLATE NOCASE", (project,))
 
     @staticmethod
-    def counts() -> dict[str, int]:
-        return {r["project"]: r["c"] for r in q("SELECT project, COUNT(*) c FROM ssh_conns GROUP BY project")}
+    def list_all() -> list[dict]:
+        return q("SELECT * FROM ssh_conns ORDER BY name COLLATE NOCASE, id")
 
     @staticmethod
     def folder_connections() -> list[dict]:

@@ -58,10 +58,8 @@ export default {
       localStorage.setItem('wb.cur', v);
       this.colLimits={};
       this.sourcesOpen=false;
-      this.projSsh=[];
       this.draft.use_worktree=false;
       this.draft.ssh_id=this.activeSource?.ssh_id || 0;
-      this.loadProjSsh();
     },
     activeSourceKey(){
       this.draft.use_worktree=false;
@@ -70,7 +68,7 @@ export default {
   },
   methods:{
     sourceKey(s){ return s.ssh_id + ':' + s.path; },
-    sourceLabel(s){ return s.ssh_id ? s.connection : '本机'; },
+    sourceLabel(s){ return s.ssh_id ? this.sshConnections.find(c=>c.id===s.ssh_id)?.name || s.connection : '本机'; },
     sourceDisplay(s){ return s.ssh_id ? s.path : this.shortPath(s.path); },
     switchProject(){ if (this.sourceEditor) return; if (!this.pswOpen) this.togglePsw(); this.sideOpen=true; },
     pick(name){ this.cur=name; this.pswOpen=false; this.sideOpen=false; this.closeTask(); },

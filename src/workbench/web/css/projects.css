@@ -95,6 +95,9 @@
 .folder-connections button[aria-pressed=true]{background:var(--source-select);font-weight:600}
 .folder-connections button[aria-pressed=true] svg{color:var(--run-ink)}
 .folder-connections .folder-connection-action{color:var(--run-ink)}
+.folder-connection-row{display:flex;gap:3px}
+.folder-connection-row button{min-width:0}
+.folder-connection-row .folder-connection-edit{flex:0 0 30px;width:30px;justify-content:center;color:var(--run-ink)}
 .folder-tree-box{display:flex;flex-direction:column;gap:8px;min-width:0}
 .folder-search{height:30px;flex:none;color:var(--text-3);background:var(--source-surface)}
 .folder-search:focus-within{border-color:var(--source-blue)}
