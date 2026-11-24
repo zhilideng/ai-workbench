@@ -9,14 +9,13 @@ export default {
     engines(){ const e=this.r.cfg.engines; return ['claude','codex'].filter(x=>!e || e[x]); },
     tabs(){
       const t=[{v:'all', l:'全部'}];
-      for (const e of ['claude','codex']) t.push({v:e, l:this.r.engLabel(e), off:(this.r.cfg.engines && !this.r.cfg.engines[e]) || (!this.canEngine && e!==this.t.engine)});
-      return this.canEngine ? t : t.filter(x=>x.v!=='all');
+      for (const e of ['claude','codex']) t.push({v:e, l:this.r.engLabel(e), off:this.r.cfg.engines && !this.r.cfg.engines[e]});
+      return t;
     },
     items(){
       const q=this.q.trim().toLowerCase(), out=[];
       const engs = this.tab==='all' ? this.engines : [this.tab];
       for (const e of engs){
-        if (!this.canEngine && e!==this.t.engine) continue;
         const list=[{engine:e, model:'', label:'默认模型', meta:'跟随 CLI 配置'}];
         for (const m of this.r.modelsFor(e)) list.push({engine:e, model:m, label:m, meta:this.meta(e,m)});
         if (e===this.t.engine && this.t.model && !this.r.modelsFor(e).includes(this.t.model)) list.push({engine:e, model:this.t.model, label:this.t.model, meta:'自定义'});
@@ -39,7 +38,7 @@ export default {
       if (this.t.effort) return this.r.effortLabel(this.t.effort, this.t.engine);
       return this.dflt ? '默认 '+this.r.effortLabel(this.dflt, this.t.engine) : '默认';
     },
-    btnTitle(){ return '模型与思考强度' + (this.canEngine ? '' : '：下一条消息起生效，会话上下文保留'); },
+    btnTitle(){ return '模型与思考强度' + (this.canEngine ? '' : '：下一条消息起生效；切换引擎会开新会话，此前的对话作为上下文带过去'); },
   },
   methods:{
     meta(e,m){
@@ -51,18 +50,19 @@ export default {
     toggle(){
       if (this.disabled) return;
       this.open=!this.open;
-      if (this.open){ this.q=''; this.hi=-1; this.tab=this.canEngine ? this.t.engine : this.t.engine; this.$nextTick(()=>this.$refs.q && this.$refs.q.focus()); }
+      if (this.open){ this.q=''; this.hi=-1; this.tab=this.t.engine; this.$nextTick(()=>this.$refs.q && this.$refs.q.focus()); }
     },
     pick(it){
       const apply=()=>{
         this.t.model=it.model;
         if (this.t.effort && !this.r.effortsFor(this.t.engine, this.t.model).includes(this.t.effort)) this.t.effort='';
-        this.$emit('change', {model:this.t.model, effort:this.t.effort});
+        this.$emit('change', {engine:this.t.engine, model:this.t.model, effort:this.t.effort, permission_mode:this.t.permission_mode});
       };
       this.q=''; this.hi=-1;
       if (it.engine!==this.t.engine){
-        if (!this.canEngine) return;
+        if (!this.canEngine && !confirm(`切换到 ${this.r.engLabel(it.engine)} 会开启新会话，此前的对话会作为上下文带过去。继续？`)) return;
         this.t.engine=it.engine; this.tab=it.engine;
+        if (!this.r.modesFor(it.engine).some(m=>m.v===this.t.permission_mode)) this.t.permission_mode='plan';   // Codex 没有 default，对应只读
         this.$nextTick(apply);   // draft.engine 的 watcher 会先清空 model，再写入
       } else apply();
     },
@@ -127,7 +127,7 @@ export default {
       <input ref="q" v-model="q" placeholder="搜索模型，或输入任意模型名" aria-label="搜索模型" @keydown="onKey" autocomplete="off" spellcheck="false"><kbd>esc</kbd></label>
     <div class="mp-tabs" role="tablist">
       <button v-for="tb in tabs" :key="tb.v" type="button" role="tab" class="mp-tab" :class="{on:tab===tb.v}" :aria-selected="tab===tb.v" :disabled="tb.off"
-        :title="tb.off && !canEngine ? '会话进行中不能切换引擎' : null" @click="tab=tb.v">
+        @click="tab=tb.v">
         <ic v-if="tb.v!=='all'" :class="tb.v" :n="tb.v==='codex'?'terminal':'spark'" :s="13" :w="2.2"></ic>{{ tb.l }}</button>
     </div>
     <div class="mp-list" role="listbox" aria-label="模型">

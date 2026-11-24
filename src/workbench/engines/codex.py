@@ -12,6 +12,7 @@ from typing import Optional
 from workbench.core.errors import BadRequest, WorkbenchError
 from workbench.core.shell import child_env, find_bin
 from workbench.engines.base import CommandSpec, Engine, EventReader, RunState
+from workbench.engines.codex_server import close_server, get_server
 
 # 与 Codex 客户端一致，只提供这五档（不含 max）
 CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "ultra"]
@@ -108,7 +109,8 @@ class CodexEngine(Engine):
         if spec.ssh_context and not spec.resume_sid:  # codex 没有追加系统提示的参数：新会话时放在提示词前面
             prompt = f"{spec.ssh_context}\n\n---\n\n{prompt or DEFAULT_IMAGE_PROMPT}"
         cmd = [spec.binary or self.bin, "exec"] + (["resume", spec.resume_sid] if spec.resume_sid else [])
-        cmd += ["--json", "--skip-git-repo-check"]
+        # analytics.enabled=false：开启时 codex 回复完还要上报约 10 秒才退出，任务一直显示执行中、也不能发下一条
+        cmd += ["--json", "--skip-git-repo-check", "-c", "analytics.enabled=false"]
         if mode == "bypassPermissions":
             cmd += ["--dangerously-bypass-approvals-and-sandbox"]
         else:
@@ -126,6 +128,18 @@ class CodexEngine(Engine):
 
     def resume_command(self, sid: str, binary: Optional[str] = None) -> str:
         return f"{shlex.quote(binary or 'codex')} resume {shlex.quote(sid)}"
+
+    def live_server(self, task: dict):
+        # 本机任务走常驻的 codex app-server；远程任务仍在服务器上执行 codex exec
+        return None if task.get("ssh_id") else get_server()
+
+    async def warm(self) -> None:
+        server = get_server()
+        await server.ensure()
+        server._touch()   # 一直没用到：空闲到时关掉
+
+    async def close(self) -> None:
+        await close_server()
 
     def parse_event(self, ev: dict, st: RunState) -> None:
         t = ev.get("type")

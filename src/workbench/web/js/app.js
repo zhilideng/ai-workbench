@@ -83,11 +83,15 @@ const app = Vue.createApp({
     this.loadSshConnections();
     this.$refs.promptInput && this.$refs.promptInput.focus();
     this.timer = setInterval(this.tick, 1500);
+    setInterval(this.pollLive, 250);
     this.loadQuota(false);
     setInterval(()=>this.loadQuota(false), 5*60*1000);
     setInterval(async()=>{ try{ this.projects = await apiq('/api/projects'); }catch(e){} }, 30000);
     setInterval(()=>{ if (!document.hidden) this.loadSshConnections(); }, 15000);
     nativeReady().then(v=>{ this.native=v; });
+    // 窗口重新获得焦点：补一次预热（常驻进程 / 预建会话空闲 15 分钟会关闭；已准备好时后端什么也不做）
+    window.addEventListener('focus', ()=>this.prewarmDraft());
+    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) this.prewarmDraft(); });
     document.addEventListener('click', this.openLocalLink);
     // 文件拖到输入框以外的地方时，不要让窗口直接打开它
     ['dragover','drop'].forEach(t=>window.addEventListener(t, e=>{

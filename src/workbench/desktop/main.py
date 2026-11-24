@@ -66,12 +66,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     from workbench.api import create_app
     from workbench.desktop.bridge import Bridge
     from workbench.desktop.security import TokenGuard, new_token
-    from workbench.desktop.server import EmbeddedServer
+    from workbench.desktop.server import EmbeddedServer, preferred_port
 
     state: dict = {}
     token = new_token()
-    app = TokenGuard(create_app(on_runner=lambda r: state.update(runner=r)), token)
-    server = EmbeddedServer(app)
+    app = TokenGuard(create_app(on_runner=lambda r: state.update(runner=r), warm=True), token)
+    server = EmbeddedServer(app, port=preferred_port(str(settings.paths.data)))
     server.start()
     log.info("本地服务 %s", server.url)
 

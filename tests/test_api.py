@@ -222,3 +222,32 @@ def test_create_ssh_connection_before_project(client, monkeypatch, tmp_path):
     response = client.put(f"/api/ssh/folder-connections/{cid}", json={**body, "name": "更名连接"})
     assert response.json()[0]["name"] == "更名连接"
     assert client.get("/api/projects/alpha/ssh").json()[0]["name"] == "更名连接"
+
+
+def test_web_files_revalidate(client):
+    # 前端模块每次重新验证，更新后不会用到缓存里的旧 JS
+    r = client.get("/js/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
+def test_desktop_server_prefers_stable_port():
+    import socket
+
+    from workbench.desktop.server import EmbeddedServer, preferred_port
+    port = preferred_port("/tmp/wb-test-data")
+    assert port == preferred_port("/tmp/wb-test-data") and 41000 <= port < 49000   # 同一数据目录总是同一个端口
+    try:
+        s = EmbeddedServer(None, port=port)
+    except OSError:
+        return
+    assert s.port == port   # 端口不变，页面的 localStorage（项目、引擎等设置）重启后还在
+    s.sock.close()
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", port))
+    busy.listen()
+    try:
+        s = EmbeddedServer(None, port=port)
+        assert s.port != port   # 被占用：退回随机端口
+        s.sock.close()
+    finally:
+        busy.close()

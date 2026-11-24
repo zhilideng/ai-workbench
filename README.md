@@ -98,9 +98,11 @@ tests/             接口、引擎、SSH、运行器测试
 - **界面**：中性灰配色（跟随系统明暗）。左侧是任务列表，按 进行中 / 待验收 / 待办 / 最近 分组（分组可折叠），顶部 ⌘K 切换项目、可搜索任务，底部可展开额度。会话里每一轮的工具调用和中间输出折叠成「已工作 12s · N 个操作」，执行中自动展开，只把最终回复直接展示。
 - **项目列表与源文件夹**：新建项目时可以浏览本机或 SSH 目录，也可以粘贴路径直达。选择源文件夹后会自动填入空白项目名。SSH 连接可以在目录选择器中添加并复用。看板顶部可以切换新任务的默认源文件夹，也可以更改或移除关联。源文件保留在原位置，已配置的项目目录下的子目录仍会显示。
 - **任务看板**：待办 → 执行中 → 待验收 → 已完成 / 失败。新建任务只有一个输入框，写的内容原样作为提示词发给 AI，第一行作为标题。
-- **执行**：`claude -p <prompt> --output-format stream-json --permission-mode <mode>`，工作目录为项目目录，日志存于数据目录的 `runs/run-N.jsonl`，界面实时展示文本、工具调用和结果。
+- **执行**：本机任务在常驻进程里执行，后续消息不再冷启动：Claude 每个会话一个 `claude --input-format stream-json --output-format stream-json --permission-prompt-tool stdio` 进程（`engines/claude_server.py`，与官方 Agent SDK 同一套协议），Codex 见下文「Codex 引擎」。远程任务和常驻进程启动失败时按每条消息执行 `claude -p` / `codex exec`。日志存于数据目录的 `runs/run-N.jsonl`，界面实时展示文本、工具调用与结果，回复逐字显示。
 - **本地文件**：AI 回复里引用的本地图片 / SVG 直接显示；文件链接用系统默认应用打开（如「预览」）。只允许读任务工作目录和项目目录内的文件。
-- **继续对话**：任务完成后在底部输入框补充要求，会以 `--resume <session_id>` 继续同一会话。
+- **继续对话**：任务完成后在底部输入框补充要求，在同一会话里接着干（常驻进程直接续接；远程任务以 `--resume <session_id>` / `codex exec resume` 续接）。
+- **完整展示**：对话里显示 CLI 的全部输出：思考过程（可折叠，逐字出现）、回复、工具调用的完整参数与输出、Codex 的文件 diff 与计划 / 待办更新、警告和其他条目，长内容不截断。Codex 的思考摘要取决于模型与 `model_reasoning_summary` 设置，为 none 时只有加密内容，界面上会注明。
+- **审批**：本机任务里需要审批的命令、文件修改和工具调用会在对话里显示审批卡片，可「批准」「本会话都批准」或「拒绝」；这一轮结束时还没处理的按拒绝处理。远程任务没有审批，按权限模式直接放行或拒绝。
 - **看板拖拽**：把卡片拖到另一列即改为该列状态；拖到「执行中」即开始执行（只限待办 / 失败 / 已取消的任务）。
 - **图片附件**：输入框旁的图片按钮、粘贴或直接拖入都可添加 png / jpg / gif / webp（≤20MB）。Codex 用 `-i` 传图；Claude 把图片路径写进提示词并 `--add-dir` 让它用 Read 查看。
 - **删除任务**：卡片悬停时右上角、列表每行末尾、任务详情顶部都可删除；对话、运行日志和附带的图片一并删除。
@@ -120,7 +122,12 @@ tests/             接口、引擎、SSH、运行器测试
 
 ## Codex 引擎
 
-输入框里把引擎切到 **Codex** 即用 `codex exec --json` 执行（需先 `codex login`）。权限模式映射为 codex 沙箱：自动改文件 → `workspace-write`，只出方案/只读 → `read-only`，全部放行 → `--dangerously-bypass-approvals-and-sandbox`。模型列表读自 `~/.codex/models_cache.json`。
+输入框里把引擎切到 **Codex** 即可（需先 `codex login`）。模型列表读自 `~/.codex/models_cache.json`。
+
+- **本机任务**在一个常驻的 `codex app-server` 里执行（`engines/codex_server.py`，与 t3code 的做法一致）：会话在第一条消息时 `thread/start`，一次带上工作目录、模型、沙箱和审批策略；每条消息是一次 `turn/start`，停止用 `turn/interrupt`，回复逐字显示。所有任务空闲 15 分钟后进程退出，下次发消息时再启动；应用退出时一并关闭。
+- **权限模式**映射为沙箱 + 审批策略：自动改文件 → `workspace-write` + `on-request`；只读 → `read-only` + `on-request`；全部放行 → `danger-full-access` + `never`。需要审批时 Codex 发来 `requestApproval`，对话里显示审批卡片，回复 `accept` / `acceptForSession` / `decline`。
+- **预热**：与 CLI 打开时就建好会话一样，新建任务的输入框一就绪（`POST /api/tasks/prewarm`）就按发送时的目录、模型、思考等级、权限预建会话（Codex `thread/start`，Claude 预启动进程并完成 `initialize`），被新任务用掉后自动补建；打开已有任务时（`POST /api/tasks/{id}/prewarm`）提前恢复会话。设置不一致就不用预建的会话。远程任务与 worktree 新任务不预热。桌面应用监听由数据目录算出的固定端口，重启后页面设置（项目、引擎、思考等级等）保留，打开应用时就能按上次的设置预热；启动时就拉起 `codex app-server`；输入框同时为两个引擎预热当前项目（另一个引擎按切换过去后的设置）；窗口重新获得焦点时补一次。预热过程记在应用日志 `logs/app.log`（`workbench.prewarm`）里。
+- **远程任务**，以及常驻进程启动失败时，按每条消息启动一次 `codex exec --json`（带 `-c analytics.enabled=false`，回复完立即退出）。
 
 ## 额度
 

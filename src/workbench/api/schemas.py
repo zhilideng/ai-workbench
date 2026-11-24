@@ -30,6 +30,23 @@ class TaskPatch(BaseModel):
     model: Optional[str] = None
     effort: Optional[str] = None
     kind: Optional[str] = None
+    engine: Optional[str] = None  # 切换引擎：清空原会话，下一条消息带着此前的对话记录开新会话
+
+
+class PrewarmIn(BaseModel):
+    project: str
+    engine: str = "claude"
+    source_path: str = ""
+    permission_mode: str = "acceptEdits"
+    model: str = ""
+    effort: str = ""
+    ssh_id: int = 0
+    use_worktree: bool = False
+
+
+class ApprovalIn(BaseModel):
+    id: str            # 审批编号（运行日志里 approval 事件的 id）
+    decision: str      # accept | acceptForSession | decline | cancel
 
 
 class RunIn(BaseModel):
@@ -38,6 +55,7 @@ class RunIn(BaseModel):
     model: Optional[str] = None
     effort: Optional[str] = None
     permission_mode: Optional[str] = None
+    engine: Optional[str] = None
     # 编辑某条已发送的消息：回退到该消息之前，用新内容重新发送（该条及之后的记录会被替换）
     edit_run_id: Optional[int] = None
     images: Optional[list[str]] = None  # 本条消息附带的图片（/api/uploads 返回的 path）

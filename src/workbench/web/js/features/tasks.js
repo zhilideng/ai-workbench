@@ -1,5 +1,5 @@
 // 任务：列表、打开 / 关闭、修改状态、执行 / 停止、删除
-import {api} from '../core/api.js';
+import {api, apiq} from '../core/api.js';
 
 export default {
   data(){ return {
@@ -24,6 +24,7 @@ export default {
       if (!this.sel) history.pushState({wbTask:id}, '');
       if (!this.sel || this.sel.id!==id){ this.logs={}; this.offsets={}; this.followup=''; this.editing=null; this.clearAtts(this.replyImgs); }
       this.sel = await api('/api/tasks/'+id);
+      this.prewarmSel();
       await this.pullLogs(true);
       this.$nextTick(()=>this.$refs.replyInput && !this.isActive(this.sel) && this.$refs.replyInput.focus());
     },
@@ -34,7 +35,15 @@ export default {
     },
     newTask(){ this.sideOpen=false; this.closeTask(); this.$nextTick(()=>this.$refs.promptInput && this.$refs.promptInput.focus()); },
     async cancel(){ await api(`/api/tasks/${this.sel.id}/cancel`,{method:'POST'}); },
-    async patch(body){ this.sel = {...await api('/api/tasks/'+this.sel.id,{method:'PATCH',body}), runs:this.sel.runs}; this.refreshTasks(); },
+    async patch(body){
+      this.sel = {...await api('/api/tasks/'+this.sel.id,{method:'PATCH',body}), runs:this.sel.runs}; this.refreshTasks();
+      if (['engine','model','effort','permission_mode'].some(k=>k in body)) this.prewarmSel();   // 设置变了：按新设置提前准备
+    },
+    // 打开本机任务：后台提前恢复它的会话，写回复时就准备好了
+    prewarmSel(){
+      const t=this.sel;
+      if (t && !t.ssh_id && !this.isActive(t)) apiq(`/api/tasks/${t.id}/prewarm`,{method:'POST'}).catch(()=>{});
+    },
     async quickPatch(t, body){ await api('/api/tasks/'+t.id,{method:'PATCH',body}); this.refreshTasks(); },
     async quickRun(t){ await api(`/api/tasks/${t.id}/run`,{method:'POST', body:{message:null}}); this.refreshTasks(); },
     async quickCancel(t){ await api(`/api/tasks/${t.id}/cancel`,{method:'POST'}); },

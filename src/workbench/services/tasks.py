@@ -94,9 +94,24 @@ async def create_task(runner: Runner, *, project: str, prompt: str, title: str =
     return TaskRepo.get(tid)
 
 
+def _engine_fields(task_id: int, engine: Optional[str]) -> dict:
+    """切换引擎：原会话属于旧引擎，无法续接，清空后下一条消息会带着此前的对话记录开新会话。"""
+    t = TaskRepo.get(task_id)
+    if not t:
+        raise NotFound("任务不存在")
+    if not engine or engine == (t.get("engine") or "claude"):
+        return {}
+    get_engine(engine)
+    if t["status"] in ("running", "queued"):
+        raise Conflict("任务正在执行，先停止再切换引擎")
+    return {"engine": engine, "session_id": "", "fork_at": ""}
+
+
 def patch_task(task_id: int, fields: dict) -> dict:
+    engine = fields.get("engine")
     fields = {k: v for k, v in fields.items() if k in PATCHABLE and v is not None}
     _check_effort(fields.get("effort"))
+    fields.update(_engine_fields(task_id, engine))
     TaskRepo.update(task_id, **fields)
     return get_task(task_id)
 
@@ -118,17 +133,54 @@ def delete_task(runner: Runner, task_id: int) -> dict:
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- 预热
+
+def prewarm(*, project: str, engine: str = "claude", source_path: str = "", permission_mode: str = "acceptEdits",
+            model: str = "", effort: str = "", ssh_id: int = 0, use_worktree: bool = False) -> dict:
+    """新建任务的输入框就绪：让引擎的常驻进程按这些设置提前建好会话（与 CLI 打开时就准备好一样）。"""
+    task = {"ssh_id": ssh_id, "permission_mode": permission_mode, "model": model, "effort": effort}
+    server = get_engine(engine).live_server(task)
+    if server is None or ssh_id or use_worktree:   # 远程任务没有常驻进程；worktree 目录要到执行时才创建
+        return {"ok": False}
+    if source_path:
+        if {"path": source_path, "ssh_id": 0} not in project_sources(project):
+            raise BadRequest("请选择该项目关联的源文件夹")
+    else:
+        source_path = str(project_path(project))
+    if not Path(source_path).is_dir():
+        return {"ok": False}
+    # 目录写法与 runner.ensure_workdir 一致，执行时才能用上预建的会话
+    server.prewarm(task, str(Path(source_path)), connections.ai_context(project))
+    return {"ok": True}
+
+
+def prewarm_task(task_id: int) -> dict:
+    """打开已有任务：提前恢复它的会话；还没有会话时提前建好新会话。"""
+    t = TaskRepo.get(task_id)
+    if not t:
+        raise NotFound("任务不存在")
+    server = get_engine(t.get("engine")).live_server(t)
+    if server is None or t["status"] in ("running", "queued"):
+        return {"ok": False}
+    cwd = t["workdir"] or ("" if t["use_worktree"] else t["source_path"] or str(project_path(t["project"])))
+    if not cwd or not Path(cwd).is_dir():
+        return {"ok": False}
+    server.prewarm(t, str(Path(cwd)), connections.ai_context(t["project"]), t["session_id"] or None)
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- 发送消息
 
 async def send(runner: Runner, task_id: int, *, message: Optional[str] = None, model: Optional[str] = None,
-               effort: Optional[str] = None, permission_mode: Optional[str] = None,
+               effort: Optional[str] = None, permission_mode: Optional[str] = None, engine: Optional[str] = None,
                edit_run_id: Optional[int] = None, images: Optional[list[str]] = None) -> dict:
-    """继续对话 / 重新执行。model / effort / permission_mode 随发送一起提交，从这一轮起生效。
+    """继续对话 / 重新执行。engine / model / effort / permission_mode 随发送一起提交，从这一轮起生效。
     edit_run_id：编辑某条已发送的消息——回退到它之前，用新内容重新发送（该条及之后的记录被替换）。"""
     if runner.is_running(task_id):
         raise Conflict("任务正在执行中")
     _check_effort(effort)
     fields = {k: v for k, v in (("model", model), ("effort", effort), ("permission_mode", permission_mode)) if v is not None}
+    fields.update(_engine_fields(task_id, engine))
     TaskRepo.update(task_id, **fields)
     imgs = uploads.validate(images or [])
     t = TaskRepo.get(task_id)
@@ -159,18 +211,29 @@ async def rewind(task_id: int, edit_run_id: int, message: str) -> bool:
     if edit_run_id not in runs:
         raise NotFound("要编辑的消息不存在")
     earlier = [r for r in runs if r < edit_run_id]
+    engine = t.get("engine") or "claude"
+    # 切换过引擎：回退点之前的记录不全属于当前会话，改为把剩下的记录交接给新会话
+    handoff = bool(earlier) and any(_run_engine(r) != engine for r in earlier)
     new_sid, fork_at = "", ""
-    if t["session_id"] and earlier:
-        new_sid, fork_at = await get_engine(t.get("engine")).fork(t, earlier, runlog.events)
+    if t["session_id"] and earlier and not handoff:
+        new_sid, fork_at = await get_engine(engine).fork(t, earlier, runlog.events)
     for rid in runs:  # 删掉被编辑的这条及之后的记录
         if rid >= edit_run_id:
             runlog.delete(rid)
             RunRepo.delete(rid)
-    if new_sid:
+    if new_sid or handoff:
         TaskRepo.update(task_id, session_id=new_sid, fork_at=fork_at)
         return False
     TaskRepo.update(task_id, session_id="", fork_at="", description=message, title=derive_title(message))
     return True
+
+
+def _run_engine(run_id: int) -> str:
+    """某次运行使用的引擎（记录在运行日志的 start 事件里）。"""
+    for e in runlog.events(run_id):
+        if e.get("type") == "wb" and e.get("subtype") == "start":
+            return e.get("engine") or "claude"
+    return ""
 
 
 def cancel(runner: Runner, task_id: int) -> dict:

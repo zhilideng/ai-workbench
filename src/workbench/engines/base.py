@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Optional
+from typing import Awaitable, Callable, Iterable, Optional
 
 from workbench.core.shell import bin_available, find_bin
 
@@ -34,6 +34,18 @@ class CommandSpec:
 
 
 EventReader = Callable[[int], Iterable[dict]]   # run_id -> 该次运行的事件
+
+
+class ServerUnavailable(RuntimeError):
+    """常驻进程启动或初始化失败：运行器改为按 build_cmd 启动 CLI。"""
+
+
+class TurnHandle:
+    """在常驻进程里执行的一轮：interrupt 停止当前轮次，decide(审批编号, 决定) 回复审批请求（轮次开始后才有值）。"""
+
+    def __init__(self) -> None:
+        self.interrupt: Optional[Callable[[], Awaitable[object]]] = None
+        self.decide: Optional[Callable[[str, str], bool]] = None
 
 
 class Engine(ABC):
@@ -72,6 +84,17 @@ class Engine(ABC):
     def remote_env(self, task: dict, conn: dict) -> dict:
         """远程执行时额外的环境变量。"""
         return {}
+
+    # ---- 常驻进程（可选）
+    def live_server(self, task: dict):
+        """能在常驻进程里执行该任务时返回服务对象（需提供 turn()，见 engines/codex_server.py），否则 None。"""
+        return None
+
+    async def warm(self) -> None:
+        """应用启动时提前拉起常驻进程（可选），第一次发消息时不用再冷启动。"""
+
+    async def close(self) -> None:
+        """应用退出时关闭常驻进程。"""
 
     # ---- 事件流
     @abstractmethod

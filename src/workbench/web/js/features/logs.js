@@ -1,6 +1,6 @@
 // 运行日志：增量拉取事件，把 Claude / Codex 的事件流转成对话视图
-import {api} from '../core/api.js';
-import {toolSummary} from '../core/tools.js';
+import {api, apiq} from '../core/api.js';
+import {toolDetail, toolSummary} from '../core/tools.js';
 import {relPath} from '../core/paths.js';
 
 export default {
@@ -11,22 +11,61 @@ export default {
   methods:{
     async pullLogs(scroll){
       if (!this.sel) return;
-      const box=this.$refs.logBox, atBottom = box && box.scrollHeight-box.scrollTop-box.clientHeight<80;
-      for (const r of this.sel.runs){
-        if (this.offsets[r.id]==='done' && r.status!=='running') continue;
-        const off = typeof this.offsets[r.id]==='number' ? this.offsets[r.id] : 0;
-        const res = await api(`/api/runs/${r.id}/events?offset=${off}`);
-        const arr = this.logs[r.id] || [];
-        res.events.forEach(e=>this.ingest(arr,e));
-        this.logs[r.id]=arr;
-        this.offsets[r.id] = res.status==='running' ? res.offset : 'done';
-      }
-      if (scroll||atBottom) this.$nextTick(()=>{ if(this.$refs.logBox) this.$refs.logBox.scrollTop=1e9; });
+      if (this._pulling){ this._pullAgain=true; this._pullScroll=this._pullScroll||scroll; return; }   // 正在拉取：结束后再拉一次
+      this._pulling=true;
+      let ended=false;
+      try{
+        const box=this.$refs.logBox, atBottom = box && box.scrollHeight-box.scrollTop-box.clientHeight<80;
+        for (const r of this.sel.runs){
+          if (this.offsets[r.id]==='done') continue;   // 已读完的运行不会再有输出（sel 里的状态可能还没刷新，不能据此重读）
+          const off = typeof this.offsets[r.id]==='number' ? this.offsets[r.id] : 0;
+          const res = await apiq(`/api/runs/${r.id}/events?offset=${off}`);
+          const arr = this.logs[r.id] || [];
+          res.events.forEach(e=>this.ingest(arr,e));
+          this.logs[r.id]=arr;
+          if (res.status!=='running'){ arr.forEach(x=>{ if (x.live) x.live=false; }); ended = ended || r.status==='running'; }
+          this.offsets[r.id] = res.status==='running' ? res.offset : 'done';
+        }
+        if (scroll||atBottom) this.$nextTick(()=>{ if(this.$refs.logBox) this.$refs.logBox.scrollTop=1e9; });
+      }finally{ this._pulling=false; }
+      if (this._pullAgain){ const sc=this._pullScroll; this._pullAgain=this._pullScroll=false; await this.pullLogs(sc); }
+      if (ended) this.tick();   // 运行刚结束：立即刷新任务状态，不等下一轮轮询
+    },
+    // 当前任务执行中时高频拉取新事件（只请求一个接口），让输出几乎实时出现
+    pollLive(){
+      if (this.sel && this.isActive(this.sel) && !document.hidden) this.pullLogs(false).catch(()=>{});
+    },
+    // 逐字增量：追加到同类型正在生成的那一行（正文 text / 思考 think），没有就新建
+    appendLive(arr, cls, text, item){
+      const last=arr[arr.length-1];
+      if (last && last.live && last.cls===cls && (!item || !last.item || last.item===item)) last.text+=text;
+      else arr.push({cls, text, live:true, item:item||''});
+    },
+    // 整条内容到达：替换正在生成的那一行，没有就新建
+    finishLive(arr, cls, text, item){
+      const row=[...arr].reverse().find(x=>x.cls===cls && x.live && (!item || !x.item || x.item===item));
+      if (row){ row.text=text||row.text; row.live=false; return; }
+      if ((text||'').trim()) arr.push({cls, text, item:item||''});
     },
     ingest(arr,e){
       if (this.ingestCodex(arr,e)) return;
       if (e.type==='wb'){
-        if (e.subtype==='start') arr.push({cls:'prompt', text:e.prompt, cwd:e.cwd, meta:this.runMeta(e), images:e.images||[]});
+        if (e.subtype==='approval'){   // Claude / Codex 请求批准执行命令、修改文件或使用工具
+          arr.push({cls:'approval', id:e.id, kind:e.kind, tool:e.tool||'', command:e.command, cwd:e.cwd, reason:e.reason, grantRoot:e.grant_root, decision:null, busy:false});
+          return;
+        }
+        if (e.subtype==='approval_done'){ const a=arr.find(x=>x.cls==='approval' && x.id===e.id); if (a) a.decision=e.decision; return; }
+        if (e.subtype==='delta') this.appendLive(arr, 'text', e.text);
+        else if (e.subtype==='thinking_delta') this.appendLive(arr, 'think', e.text, e.item);
+        else if (e.subtype==='output_delta'){ const row=arr.find(x=>x.cls==='tool' && x.id===e.item); if (row) row.output=(row.output||'')+e.text; }
+        else if (e.subtype==='plan'){   // Codex 的计划 / 待办更新：同一轮只保留最新的一份
+          const text=(e.explanation ? e.explanation+'\n\n' : '')+(e.plan||[]).map(x=>({completed:'☑',inProgress:'▶'}[x.status]||'☐')+' '+x.step).join('\n');
+          const row=arr.find(x=>x.cls==='tool' && x.id==='__plan');
+          if (row){ row.output=text; row.summary=(e.plan||[]).length+' 项'; }
+          else arr.push({cls:'tool', id:'__plan', name:'Todo', summary:(e.plan||[]).length+' 项', output:text});
+        }
+        else if (e.subtype==='warning') arr.push({cls:'sys', text:'⚠ '+e.text});
+        else if (e.subtype==='start') arr.push({cls:'prompt', text:e.prompt, cwd:e.cwd, meta:this.runMeta(e), images:e.images||[]});
         else if (e.subtype==='stderr' && e.text.trim()) arr.push({cls:'err', text:e.text});
         else if (e.subtype==='error') arr.push({cls:'err', text:'工作台错误：'+e.text});
         return;
@@ -34,8 +73,10 @@ export default {
       if (e.type==='system' && e.subtype==='init'){ arr.push({cls:'sys', text:`会话 ${e.session_id} · 模型 ${e.model} · 权限 ${e.permissionMode}`}); return; }
       if (e.type==='assistant'){
         for (const c of (e.message?.content||[])){
-          if (c.type==='text' && c.text.trim()) arr.push({cls:'text', text:c.text});
-          else if (c.type==='tool_use') arr.push({cls:'tool', id:c.id, name:c.name, summary:toolSummary(c.name,c.input), output:''});
+          if (c.type==='text') this.finishLive(arr, 'text', c.text);
+          else if (c.type==='thinking') this.finishLive(arr, 'think', c.thinking);
+          else if (c.type==='redacted_thinking') arr.push({cls:'think', text:'（这段思考被加密，CLI 没有提供明文）'});
+          else if (c.type==='tool_use') arr.push({cls:'tool', id:c.id, name:c.name, summary:toolSummary(c.name,c.input), detail:toolDetail(c.name,c.input), output:''});
         }
         return;
       }
@@ -43,7 +84,7 @@ export default {
         for (const c of (e.message?.content||[])){
           if (c.type!=='tool_result') continue;
           const tool = arr.find(x=>x.cls==='tool'&&x.id===c.tool_use_id);
-          const out = Array.isArray(c.content) ? c.content.map(x=>x.text||'').join('\n') : String(c.content||'');
+          const out = Array.isArray(c.content) ? c.content.map(x=>x.text||(x.type==='image'?'［图片］':'')).join('\n') : String(c.content||'');
           if (tool){ tool.output=out; tool.isErr=!!c.is_error; }
         }
         return;
@@ -60,22 +101,48 @@ export default {
       if (!t.startsWith('item.')) return false;
       const it=e.item||{}, done=t==='item.completed';
       let row=arr.find(x=>x.cls==='tool'&&x.id===it.id);
-      const tool=(name,summary)=>{ if(!row){ row={cls:'tool', id:it.id, name, summary, output:''}; arr.push(row); } else { row.summary=summary; } };
+      const tool=(name,summary,detail)=>{
+        if (!row){ row={cls:'tool', id:it.id, name, summary, detail:detail||'', output:''}; arr.push(row); }
+        else { row.summary=summary; if (detail) row.detail=detail; }
+      };
       switch(it.type){
-        case 'agent_message': if (done && (it.text||'').trim()) arr.push({cls:'text', text:it.text}); break;
-        case 'reasoning': break;
-        case 'command_execution':
-          tool('Bash', (it.command||'').replace(/^\/bin\/(zsh|bash) -lc /,''));
-          if (done){ row.output=it.aggregated_output||''; row.isErr=it.exit_code!==0 && it.exit_code!=null; }
+        case 'agent_message': if (done) this.finishLive(arr, 'text', it.text); break;
+        case 'reasoning': {   // 思考：常驻进程给出摘要 + 正文，codex exec 给出 text
+          if (!done) break;
+          const text = it.text || [...(it.summary||[]), ...(it.content||[])].join('\n\n');
+          if (text.trim()) this.finishLive(arr, 'think', text, it.id);
+          else if (!arr.some(x=>x.cls==='think' && x.item===it.id)) arr.push({cls:'think', item:it.id, empty:true,
+            text:'模型进行了一段思考，但没有提供可读的内容（Codex 的思考摘要设置为 none 时只返回加密内容，终端 CLI 里同样看不到）'});
           break;
-        case 'file_change': tool('Edit', (it.changes||[]).map(c=>`${c.kind||''} ${relPath(c.path)}`).join(', ')); break;
-        case 'mcp_tool_call': tool(`${it.server}.${it.tool}`, JSON.stringify(it.arguments||{}).slice(0,160));
-          if (done && it.result) row.output=JSON.stringify(it.result).slice(0,6000); break;
-        case 'web_search': tool('WebSearch', it.query||''); break;
+        }
+        case 'plan': if (done) this.finishLive(arr, 'think', '**计划**\n\n'+(it.text||''), it.id); break;
+        case 'command_execution':
+          tool('Bash', (it.command||'').replace(/^\/bin\/(zsh|bash) -lc /,''), it.cwd ? '目录：'+it.cwd : '');
+          if (done){ row.output=it.aggregated_output||row.output||''; row.isErr=it.exit_code!==0 && it.exit_code!=null; }
+          break;
+        case 'file_change': {
+          const ch=it.changes||[];
+          tool('Edit', ch.map(c=>`${c.kind||''} ${relPath(c.path)}`).join(', '));
+          const diff=ch.map(c=>c.diff ? `--- ${c.path}${c.move_path ? ' → '+c.move_path : ''}\n${c.diff}` : '').filter(Boolean).join('\n\n');
+          if (diff) row.output=diff;
+          break;
+        }
+        case 'mcp_tool_call':
+          tool(`${it.server}.${it.tool}`, JSON.stringify(it.arguments||{}).slice(0,160), '参数：\n'+JSON.stringify(it.arguments||{}, null, 2));
+          if (done){
+            if (it.result) row.output=typeof it.result==='string' ? it.result : JSON.stringify(it.result, null, 2);
+            if (it.error){ row.output=(row.output ? row.output+'\n\n' : '')+'错误：'+JSON.stringify(it.error, null, 2); row.isErr=true; }
+          }
+          break;
+        case 'web_search': tool('WebSearch', it.query||'', it.action ? JSON.stringify(it.action, null, 2) : '');
+          if (done && it.results) row.output=JSON.stringify(it.results, null, 2); break;
         case 'todo_list': tool('Todo', (it.items||[]).map(x=>(x.completed?'☑':'☐')+' '+x.text).join('  ')); break;
         case 'error': if (/unrecognized configuration setting/i.test(it.message||'')) break;
           if (done && !arr.some(x=>x.text==='⚠ '+(it.message||''))) arr.push({cls:'sys', text:'⚠ '+(it.message||'')}); break;
-        default: if (done) arr.push({cls:'sys', text:`${it.type}: ${JSON.stringify(it).slice(0,200)}`});
+        case 'other':   // 没有专门格式的条目（子代理、图片、上下文压缩等）：原样显示
+          if (done){ tool(it.item_type||'条目', ''); row.output=JSON.stringify(it.raw||it, null, 2); }
+          break;
+        default: if (done){ tool(it.type||'条目', ''); row.output=JSON.stringify(it, null, 2); }
       }
       return true;
     },
@@ -92,14 +159,24 @@ export default {
           if (e.text && !(last && last.text.trim()===e.text.trim())) seq.push({cls:'text', text:e.text});
           continue;
         }
-        if (e.cls==='text' || e.cls==='tool' || (e.cls==='sys' && e.text.startsWith('⚠'))) seq.push(e);
+        if (e.cls==='text' || e.cls==='think' || e.cls==='tool' || (e.cls==='sys' && e.text.startsWith('⚠'))) seq.push(e);
       }
       let work=seq, final=[];
       if (r.status!=='running'){
         let k=-1; seq.forEach((e,i)=>{ if (e.cls!=='text') k=i; });
         work=seq.slice(0,k+1); final=seq.slice(k+1);
       }
-      return {prompt, work, final, notes, tools:work.filter(e=>e.cls==='tool').length};
+      return {prompt, work, final, notes, tools:work.filter(e=>e.cls==='tool').length, approvals:a.filter(e=>e.cls==='approval')};
+    },
+    async decide(a, decision){
+      if (a.busy || a.decision) return;
+      a.busy=true;
+      try{ await api(`/api/tasks/${this.sel.id}/approval`,{method:'POST', body:{id:a.id, decision}}); a.decision=decision; }
+      catch(e){} finally{ a.busy=false; }
+    },
+    approvalText(a, running){
+      if (!a.decision) return running ? '' : '已失效（未处理，已按拒绝处理）';
+      return {accept:'已批准', acceptForSession:'已批准（本会话同类操作不再询问）', decline:'已拒绝', cancel:'已拒绝并停止'}[a.decision]||a.decision;
     },
     workOpen(r){ const v=this.workState[r.id]; return v===undefined ? r.status==='running' : v; },
     toggleWork(r){ this.workState[r.id]=!this.workOpen(r); },

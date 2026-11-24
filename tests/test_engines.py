@@ -8,6 +8,7 @@ def test_claude_cmd():
     e = get_engine("claude")
     cmd = e.build_cmd(CommandSpec({**TASK, "model": "opus", "effort": "high"}, "hi", binary="claude"))
     assert cmd[:3] == ["claude", "-p", "hi"]
+    assert "--include-partial-messages" in cmd   # 逐字输出
     assert cmd[cmd.index("--model") + 1] == "opus" and cmd[cmd.index("--effort") + 1] == "high"
     assert e.mask_prompt(cmd)[2] == "<prompt>"
     resumed = e.build_cmd(CommandSpec({**TASK, "fork_at": "u1"}, "more", resume_sid="s1", binary="claude"))
@@ -33,6 +34,7 @@ def test_codex_cmd():
                                       ssh_context="ctx", binary="codex"))
     assert resumed[2:4] == ["resume", "t1"] and resumed[-1] == "go"
     assert "--dangerously-bypass-approvals-and-sandbox" in resumed
+    assert "analytics.enabled=false" in cmd and "analytics.enabled=false" in resumed   # 回复完立即退出
 
 
 def test_parse_events():

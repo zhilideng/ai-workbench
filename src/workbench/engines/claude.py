@@ -5,6 +5,7 @@ import shlex
 from typing import Optional
 
 from workbench.engines.base import CommandSpec, Engine, EventReader, RunState
+from workbench.engines.claude_server import close_server, get_server
 
 CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 ROOT_BYPASS_MSG = "Claude CLI 不允许以 root 身份使用「全部放行」"
@@ -27,7 +28,9 @@ class ClaudeEngine(Engine):
 
     def build_cmd(self, spec: CommandSpec) -> list[str]:
         t = spec.task
-        cmd = [spec.binary or self.bin, "-p", with_images(spec.prompt, spec.images), "--output-format", "stream-json", "--verbose"]
+        # --include-partial-messages：逐字输出回复（与直接用 CLI 一样边生成边显示），而不是整条消息生成完才出现
+        cmd = [spec.binary or self.bin, "-p", with_images(spec.prompt, spec.images), "--output-format", "stream-json", "--verbose",
+               "--include-partial-messages"]
         if spec.images and spec.uploads_dir:  # 图片不在项目目录内，需显式放行读取
             cmd += ["--add-dir", spec.uploads_dir]
         cmd += ["--permission-mode", t.get("permission_mode") or "acceptEdits"]
@@ -56,6 +59,13 @@ class ClaudeEngine(Engine):
         if task.get("permission_mode") == "bypassPermissions" and conn.get("allow_root_bypass"):
             return {"IS_SANDBOX": "1"}
         return {}
+
+    def live_server(self, task: dict):
+        # 本机任务在常驻的 claude 进程里执行（stream-json）；远程任务仍在服务器上执行 claude -p
+        return None if task.get("ssh_id") else get_server()
+
+    async def close(self) -> None:
+        await close_server()
 
     def parse_event(self, ev: dict, st: RunState) -> None:
         t = ev.get("type")

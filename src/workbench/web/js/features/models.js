@@ -3,10 +3,10 @@
 export default {
   data(){ return {
       permModes:[
-        {v:'acceptEdits',s:'自动改文件',l:'acceptEdits（自动改文件）',d:'自动允许编辑文件；需要审批的命令（如部分 Bash）会被拒绝，Claude 会绕过或在总结中说明。'},
+        {v:'acceptEdits',s:'自动改文件',l:'acceptEdits（自动改文件）',d:'自动允许编辑文件；需要审批的命令（如部分 Bash）会在对话里请你批准。远程任务没有审批，这类命令会被拒绝。'},
         {v:'bypassPermissions',s:'全部放行',l:'bypassPermissions（全部放行）',d:'⚠️ 跳过所有权限检查，Claude 可执行任意命令。建议配合 worktree 使用。'},
         {v:'plan',s:'只出方案',l:'plan（只出方案）',d:'只读分析并给出实施方案，不修改任何文件。适合先评估再执行。'},
-        {v:'default',s:'只读',l:'default（需审批的全部拒绝）',d:'非交互模式下需要审批的操作都会被拒绝，基本只能读代码。'},
+        {v:'default',s:'逐项审批',l:'default（逐项审批）',d:'改文件、执行命令都会在对话里请你批准。远程任务没有审批，这类操作会被拒绝。'},
       ],
   }; },
   methods:{
@@ -14,9 +14,9 @@ export default {
     modesFor(engine){
       if (engine!=='codex') return this.permModes;
       return [
-        {v:'acceptEdits',s:'工作区可写',l:'workspace-write（可改项目内文件）',d:'codex 沙箱 workspace-write：可读写项目目录并执行命令，网络受限。'},
+        {v:'acceptEdits',s:'工作区可写',l:'workspace-write（可改项目内文件）',d:'codex 沙箱 workspace-write：可读写项目目录并执行命令，网络受限；越出沙箱的操作会在对话里请你批准。'},
         {v:'bypassPermissions',s:'全部放行',l:'无沙箱（全部放行）',d:'⚠️ --dangerously-bypass-approvals-and-sandbox：不受沙箱限制。建议配合 worktree。'},
-        {v:'plan',s:'只读',l:'read-only（只读分析）',d:'codex 沙箱 read-only：只能读，不能改文件。'},
+        {v:'plan',s:'只读',l:'read-only（只读分析）',d:'codex 沙箱 read-only：只能读；需要改文件或执行命令时会在对话里请你批准。'},
       ];
     },
     modeOf(engine, v){ return this.modesFor(engine).find(m=>m.v===v) || this.modesFor(engine)[0]; },

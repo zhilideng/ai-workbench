@@ -341,11 +341,29 @@
                   <template v-for="(e,j) in v.work" :key="j">
                     <details v-if="e.cls==='tool'" class="tool" :class="{err:e.isErr}">
                       <summary><span class="tname"><ic :n="toolIcon(e.name)" :s="12"></ic>{{ e.name }}</span><span class="tsum">{{ e.summary }}</span><ic class="chev" n="chevd" :s="12"></ic></summary>
-                      <pre v-if="e.output">{{ e.output.slice(0,8000) }}</pre><div v-else class="note">（无输出）</div>
+                      <pre v-if="e.detail" class="tdetail">{{ e.detail }}</pre>
+                      <pre v-if="e.output">{{ e.output }}</pre><div v-else class="note">（无输出）</div>
+                    </details>
+                    <details v-else-if="e.cls==='think'" class="think" :class="{'think-empty':e.empty}" :open="!e.empty">
+                      <summary><ic n="brain" :s="12"></ic>{{ e.live ? '思考中…' : '思考' }}<ic class="chev" n="chevd" :s="12"></ic></summary>
+                      <div class="ai-text" v-html="md(e.text)"></div>
                     </details>
                     <div v-else-if="e.cls==='text'" class="ai-text" v-html="md(e.text)"></div>
                     <div v-else class="note">{{ e.text }}</div>
                   </template>
+                </div>
+              </div>
+              <div v-for="a in v.approvals" :key="'ap'+a.id" class="approval" :class="{pending:!a.decision && r.status==='running'}">
+                <div class="ap-h"><ic :n="a.kind==='file'?'edit':a.kind==='tool'?'tool':'terminal'" :s="13"></ic>{{ engLabel(sel.engine) }} {{ a.kind==='file' ? '请求修改文件' : a.kind==='tool' ? '请求使用工具 '+a.tool : '请求执行命令' }}
+                  <span class="ap-res" v-if="a.decision || r.status!=='running'">{{ approvalText(a, r.status==='running') }}</span></div>
+                <pre class="ap-cmd" v-if="a.command">{{ a.command }}</pre>
+                <div class="ap-meta" v-if="a.cwd || a.reason || a.grantRoot">
+                  <span v-if="a.reason">原因：{{ a.reason }}</span><span v-if="a.cwd" class="mono">目录：{{ a.cwd }}</span>
+                  <span v-if="a.grantRoot" class="mono">申请可写：{{ a.grantRoot }}</span></div>
+                <div class="ap-acts" v-if="!a.decision && r.status==='running'">
+                  <button type="button" class="btn sm primary" @click="decide(a,'accept')" :disabled="a.busy">批准</button>
+                  <button type="button" class="btn sm" @click="decide(a,'acceptForSession')" :disabled="a.busy" title="本会话里同类操作不再询问">本会话都批准</button>
+                  <button type="button" class="btn sm" @click="decide(a,'decline')" :disabled="a.busy" title="拒绝这一步，它会换个办法继续">拒绝</button>
                 </div>
               </div>
               <div v-for="(e,j) in v.notes" :key="'n'+j" class="note err">{{ e.text }}</div>
@@ -371,7 +389,7 @@
     <form class="composer" v-if="!sel" @submit.prevent="submit(true)" :class="{dropping:fileOver==='draft'}"
       @dragover="onFileOver($event,'draft')" @dragleave="fileOver=''" @drop="onFileDrop($event,draftImgs)">
       <label><span class="sr">任务描述</span>
-        <textarea ref="promptInput" v-model="draft.prompt" rows="2" @input="grow" @paste="onPaste($event,draftImgs)" @keydown.enter="onEnter($event,()=>submit(true))"
+        <textarea ref="promptInput" v-model="draft.prompt" rows="2" @input="grow" @focus="prewarmDraft" @paste="onPaste($event,draftImgs)" @keydown.enter="onEnter($event,()=>submit(true))"
           :disabled="!cur" :placeholder="!cur ? '先在左上角选择一个项目，再描述要做的事…' : draft.ssh_id>0 ? `让服务器 ${(selSsh||{}).name||''} 上的 ${engLabel(draft.engine)} 做点什么…` : `让 ${engLabel(draft.engine)} 在 ${cur} 里做点什么…`"></textarea></label>
       <div class="atts" v-if="draftImgs.length">
         <div class="att" v-for="(a,i) in draftImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
@@ -408,7 +426,7 @@
       @dragover="onFileOver($event,'reply')" @dragleave="fileOver=''" @drop="onFileDrop($event,replyImgs)">
       <label><span class="sr">回复</span>
         <textarea ref="replyInput" v-model="followup" rows="1" @input="grow" @paste="onPaste($event,replyImgs)" :disabled="isActive(sel)" @keydown.enter="onEnter($event,run)"
-          :placeholder="isActive(sel) ? engLabel(sel.engine)+' 正在执行…' : (sel.session_id ? '回复 '+engLabel(sel.engine)+'…' : '补充说明（可选），↵ 开始执行')"></textarea></label>
+          :placeholder="isActive(sel) ? engLabel(sel.engine)+' 正在执行…' : sel.session_id ? '回复 '+engLabel(sel.engine)+'…' : sel.runs.length ? '回复 '+engLabel(sel.engine)+'（新会话，会带上之前的对话）…' : '补充说明（可选），↵ 开始执行'"></textarea></label>
       <div class="atts" v-if="replyImgs.length">
         <div class="att" v-for="(a,i) in replyImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
           <button type="button" class="att-x" @click="removeAtt(replyImgs,i)" :aria-label="'移除图片 '+a.name"><ic n="x" :s="10" :w="2.6"></ic></button></div>

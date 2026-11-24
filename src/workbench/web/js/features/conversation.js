@@ -31,6 +31,6 @@ export default {
         await this.openTask(this.sel.id); this.refreshTasks();
       }catch(e){ ed.busy=false; }
     },
-    runOpts(){ const s=this.sel; return {model:s.model||'', effort:s.effort||'', permission_mode:s.permission_mode}; },
+    runOpts(){ const s=this.sel; return {engine:s.engine, model:s.model||'', effort:s.effort||'', permission_mode:s.permission_mode}; },
   },
 };
