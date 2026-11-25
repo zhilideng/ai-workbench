@@ -7,6 +7,7 @@ export const ICONS = {
   grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   chevr:'<path d="m9 6 6 6-6 6"/>', chevd:'<path d="m6 9 6 6 6-6"/>', back:'<path d="M19 12H5M11 18l-6-6 6-6"/>',
   folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  layers:'<path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/>',
   'folder-solid':'<path fill="currentColor" stroke="none" d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   'folder-lock':'<path fill="currentColor" stroke="none" d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13v-1a2 2 0 0 1 4 0v1m-5 0h6v4H9z" stroke="#fff"/>',
   settings:'<circle cx="12" cy="12" r="3"/><path d="m9 3-.8 2.3-2.3 1.3-2.5-.4-2 3.4 1.7 1.9v2l-1.7 1.9 2 3.4 2.5-.4 2.3 1.3L9 22h6l.8-2.3 2.3-1.3 2.5.4 2-3.4-1.7-1.9v-2l1.7-1.9-2-3.4-2.5.4-2.3-1.3L15 3z"/>',

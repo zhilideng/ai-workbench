@@ -3,7 +3,7 @@ import {api, apiq} from '../core/api.js';
 
 export default {
   data(){ return {
-      tasks:[], tq:'', sel:null,
+      tasks:[], tq:'', sel:null, tasksRefreshCount:0, tasksRefreshApplied:0,
       statusLabel:{todo:'待办',queued:'排队中',running:'执行中',review:'待验收',done:'已完成',failed:'失败',cancelled:'已取消'},
   }; },
   computed:{
@@ -16,9 +16,23 @@ export default {
   },
   methods:{
     isActive(t){ return t && (t.status==='running'||t.status==='queued'); },
+    dependencyLabel(t){
+      const waiting=t?.waiting_for;
+      if (!waiting?.length || this.isActive(t)) return '';
+      const stopped=waiting.filter(item=>['failed','cancelled'].includes(item.status));
+      const tasks=stopped.length ? stopped : waiting;
+      return (stopped.length ? '等待前置任务重试：' : '等待前置任务执行完毕：')+tasks.map(item=>item.title).join('、');
+    },
     countRunning(n){ return this.tasks.filter(t=>t.project===n&&this.isActive(t)).length; },
     countOpen(n){ return this.tasks.filter(t=>t.project===n&&['todo','review'].includes(t.status)).length; },
-    async refreshTasks(){ this.tasks = await api('/api/tasks'); },
+    async refreshTasks(){
+      const request=++this.tasksRefreshCount;
+      const [groups,tasks]=await Promise.all([apiq('/api/dispatch'), apiq('/api/tasks')]);
+      if (request<this.tasksRefreshApplied) return;
+      this.tasksRefreshApplied=request;
+      this.dispatchGroups=groups;
+      this.tasks=tasks;
+    },
     async openTask(id){
       this.sideOpen=false;
       if (!this.sel) history.pushState({wbTask:id}, '');
@@ -42,10 +56,14 @@ export default {
     // 打开本机任务：后台提前恢复它的会话，写回复时就准备好了
     prewarmSel(){
       const t=this.sel;
-      if (t && !t.ssh_id && !this.isActive(t)) apiq(`/api/tasks/${t.id}/prewarm`,{method:'POST'}).catch(()=>{});
+      if (t && !t.ssh_id && !this.isActive(t) && !this.dependencyLabel(t)) apiq(`/api/tasks/${t.id}/prewarm`,{method:'POST'}).catch(()=>{});
     },
     async quickPatch(t, body){ await api('/api/tasks/'+t.id,{method:'PATCH',body}); this.refreshTasks(); },
-    async quickRun(t){ await api(`/api/tasks/${t.id}/run`,{method:'POST', body:{message:null}}); this.refreshTasks(); },
+    async quickRun(t){
+      if (this.dependencyLabel(t)) return;
+      await api(`/api/tasks/${t.id}/run`,{method:'POST', body:{message:null}});
+      this.refreshTasks();
+    },
     async quickCancel(t){ await api(`/api/tasks/${t.id}/cancel`,{method:'POST'}); },
     del(){ return this.delTask(this.sel); },
     async delTask(t){

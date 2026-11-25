@@ -28,11 +28,12 @@ export default {
     collapse(c){ delete this.colLimits[c.key]; },
     // ---- 看板拖拽：拖到某列即改为该列状态；拖到「执行中」= 开始执行
     dropTarget(t, c){
-      if (!t || this.isActive(t) || c.s.includes(t.status)) return null;
+      if (!t || this.isActive(t) || this.dependencyLabel(t) || c.s.includes(t.status)) return null;
       if (c.key==='running') return ['todo','failed','cancelled'].includes(t.status) ? 'run' : null;
       return {todo:'todo', review:'review', done:'done', failed:'cancelled'}[c.key] || null;
     },
     onDragStart(e, t){
+      if (this.dependencyLabel(t)){ e.preventDefault(); return; }
       this.dragId=t.id; e.dataTransfer.effectAllowed='move';
       e.dataTransfer.setData('application/x-wb-task', String(t.id));
     },

@@ -10,11 +10,11 @@ from typing import Optional
 
 from workbench.core.errors import BadRequest, Conflict, NotFound, WorkbenchError
 from workbench.core.shell import git
-from workbench.db.repositories import RunRepo, SshRepo, TaskRepo
+from workbench.db.repositories import DependencyRepo, RunRepo, SshRepo, TaskRepo
 from workbench.engines import get_engine
 from workbench.services import connections, runlog, uploads
 from workbench.services.projects import project_path, project_sources
-from workbench.services.runner import Runner, check_remote_bypass
+from workbench.services.runner import Runner, check_dependencies, check_remote_bypass
 from workbench.ssh import commands as cmds
 from workbench.ssh import transport
 
@@ -35,13 +35,21 @@ def _check_effort(effort: Optional[str]) -> None:
 # ---------------------------------------------------------------- 查询
 
 def list_tasks(project: Optional[str] = None) -> list[dict]:
-    return TaskRepo.list(project)
+    pending: dict[int, list[dict]] = {}
+    for prerequisite in DependencyRepo.waiting(project=project):
+        pending.setdefault(prerequisite.pop("task_id"), []).append(prerequisite)
+    rows = TaskRepo.list(project)
+    for task in rows:
+        task["waiting_for"] = pending.get(task["id"], [])
+    return rows
 
 
 def get_task(task_id: int) -> dict:
     t = TaskRepo.get_view(task_id)
     if not t:
         raise NotFound("任务不存在")
+    t["waiting_for"] = [{key: row[key] for key in ("id", "title", "status")}
+                        for row in DependencyRepo.waiting(task_id)]
     engine = get_engine(t.get("engine"))
     t["image_urls"] = [uploads.url_of(i) for i in TaskRepo.images(t)]
     t["runs"] = RunRepo.summaries(task_id)
@@ -65,10 +73,10 @@ def get_task(task_id: int) -> dict:
 
 # ---------------------------------------------------------------- 增删改
 
-async def create_task(runner: Runner, *, project: str, prompt: str, title: str = "", engine: str = "claude",
-                      permission_mode: str = "acceptEdits", model: str = "", effort: str = "",
-                      use_worktree: bool = False, ssh_id: int = 0, run_now: bool = False,
-                      images: Optional[list[str]] = None, source_path: str = "") -> dict:
+def prepare_task(*, project: str, prompt: str, title: str = "", engine: str = "claude",
+                 permission_mode: str = "acceptEdits", model: str = "", effort: str = "",
+                 use_worktree: bool = False, ssh_id: int = 0, images: Optional[list[str]] = None,
+                 source_path: str = "") -> dict:
     sources = project_sources(project)
     if source_path and {"path": source_path, "ssh_id": ssh_id} not in sources:
         raise BadRequest("请选择该项目关联的源文件夹")
@@ -85,10 +93,14 @@ async def create_task(runner: Runner, *, project: str, prompt: str, title: str =
         if not SshRepo.get(ssh_id):
             raise BadRequest("SSH 连接不存在")
         use_worktree = False  # 远程任务直接在远程目录里执行
-    tid = TaskRepo.create(project=project, kind="task", title=title.strip() or derive_title(prompt), description=prompt,
-                          priority="", permission_mode=permission_mode, model=model, effort=effort,
-                          use_worktree=int(use_worktree), ssh_id=ssh_id, source_path=source_path,
-                          engine=engine, images=json.dumps(imgs))
+    return dict(project=project, kind="task", title=title.strip() or derive_title(prompt), description=prompt,
+                priority="", permission_mode=permission_mode, model=model, effort=effort,
+                use_worktree=int(use_worktree), ssh_id=ssh_id, source_path=source_path,
+                engine=engine, images=json.dumps(imgs))
+
+
+async def create_task(runner: Runner, *, run_now: bool = False, **fields) -> dict:
+    tid = TaskRepo.create(**prepare_task(**fields))
     if run_now:
         await runner.start(tid)
     return TaskRepo.get(tid)
@@ -111,6 +123,8 @@ def patch_task(task_id: int, fields: dict) -> dict:
     engine = fields.get("engine")
     fields = {k: v for k, v in fields.items() if k in PATCHABLE and v is not None}
     _check_effort(fields.get("effort"))
+    if fields.get("status") not in (None, "todo"):
+        check_dependencies(task_id)
     fields.update(_engine_fields(task_id, engine))
     TaskRepo.update(task_id, **fields)
     return get_task(task_id)
@@ -119,6 +133,8 @@ def patch_task(task_id: int, fields: dict) -> dict:
 def delete_task(runner: Runner, task_id: int) -> dict:
     if runner.is_running(task_id):
         raise Conflict("任务正在执行，先停止")
+    if DependencyRepo.has_waiting_dependents(task_id):
+        raise Conflict("后续任务正在等待此任务，请先完成它或删除依赖它的任务")
     t = TaskRepo.get(task_id)
     if t and t["branch"] and t["workdir"]:
         # 移除 worktree，但保留分支，避免丢失代码
@@ -128,8 +144,8 @@ def delete_task(runner: Runner, task_id: int) -> dict:
     for r in RunRepo.of_task(task_id):
         runlog.delete(r["id"])
         imgs += TaskRepo.images(r)
-    uploads.remove(set(imgs))
     TaskRepo.delete(task_id)
+    uploads.remove(TaskRepo.unreferenced_images(set(imgs)))
     return {"ok": True}
 
 
@@ -178,6 +194,7 @@ async def send(runner: Runner, task_id: int, *, message: Optional[str] = None, m
     edit_run_id：编辑某条已发送的消息——回退到它之前，用新内容重新发送（该条及之后的记录被替换）。"""
     if runner.is_running(task_id):
         raise Conflict("任务正在执行中")
+    check_dependencies(task_id)
     _check_effort(effort)
     fields = {k: v for k, v in (("model", model), ("effort", effort), ("permission_mode", permission_mode)) if v is not None}
     fields.update(_engine_fields(task_id, engine))

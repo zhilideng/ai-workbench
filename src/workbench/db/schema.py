@@ -7,6 +7,18 @@ from contextlib import closing
 from workbench.db.connection import connect
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS parallel_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL UNIQUE,
+    project TEXT NOT NULL,
+    title TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    task_fields TEXT NOT NULL,
+    single_task_id INTEGER,
+    state TEXT NOT NULL DEFAULT 'planning',
+    error TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project TEXT NOT NULL,
@@ -25,6 +37,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     workdir TEXT DEFAULT '',
     branch TEXT DEFAULT '',
     session_id TEXT DEFAULT '',
+    parallel_group_id INTEGER,
+    parallel_position INTEGER NOT NULL DEFAULT 0,
+    parallel_pending INTEGER NOT NULL DEFAULT 0,
+    progress INTEGER,
+    progress_label TEXT NOT NULL DEFAULT '',
     fork_at TEXT DEFAULT '',          -- claude：下次继续时先回退到这条消息（--resume-session-at）
     images TEXT DEFAULT '[]',         -- 首条消息附带的图片（uploads 下的绝对路径，JSON）
     total_cost REAL DEFAULT 0,
@@ -69,8 +86,15 @@ CREATE TABLE IF NOT EXISTS project_sources (
     project TEXT PRIMARY KEY,
     sources TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    task_id INTEGER NOT NULL,
+    prerequisite_id INTEGER NOT NULL,
+    PRIMARY KEY(task_id, prerequisite_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_prerequisite ON task_dependencies(prerequisite_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parallel ON tasks(parallel_group_id, parallel_position);
 """
 
 # (表, 列, 定义)：旧库缺这一列时补上
@@ -81,6 +105,11 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "images", "TEXT DEFAULT '[]'"),
     ("tasks", "ssh_id", "INTEGER DEFAULT 0"),
     ("tasks", "source_path", "TEXT DEFAULT ''"),
+    ("tasks", "parallel_group_id", "INTEGER"),
+    ("tasks", "parallel_position", "INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "parallel_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "progress", "INTEGER"),
+    ("tasks", "progress_label", "TEXT NOT NULL DEFAULT ''"),
     ("ssh_conns", "socks_proxy", "TEXT DEFAULT ''"),
     ("ssh_conns", "auth", "TEXT DEFAULT 'key'"),
     ("ssh_conns", "remote_claude", "TEXT DEFAULT ''"),
@@ -103,5 +132,12 @@ def init_db() -> None:
         conn.executescript("CREATE INDEX" + "CREATE INDEX".join(SCHEMA.split("CREATE INDEX")[1:]))
         # 应用重启时，之前在跑的进程已经不受管理，标记为中断
         conn.execute("UPDATE runs SET status='interrupted', ended_at=? WHERE status='running'", (time.time(),))
-        conn.execute("UPDATE tasks SET status='failed' WHERE status IN ('running','queued')")
+        conn.execute("""UPDATE tasks SET status=CASE WHEN parallel_pending=1 THEN 'todo' ELSE 'failed' END,
+                        progress=CASE WHEN parallel_pending=1 THEN NULL ELSE progress END,
+                        progress_label=CASE WHEN parallel_pending=1 THEN '' ELSE progress_label END
+                        WHERE status IN ('running','queued')""")
+        conn.execute("UPDATE parallel_groups SET state='failed', error='拆分中断，请重试' WHERE state='planning'")
+        conn.execute("""UPDATE tasks SET status='failed' WHERE parallel_group_id IS NOT NULL AND status='todo'
+                        AND parallel_pending=0
+                        AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=tasks.id)""")
         conn.commit()

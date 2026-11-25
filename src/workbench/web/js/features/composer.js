@@ -3,11 +3,11 @@ import {api, apiq} from '../core/api.js';
 
 export default {
   data(){ return {
-      draftImgs:[],
+      draftImgs:[], submitting:false, draftRequest:null,
       draft:{prompt:'', engine:['claude','codex'].includes(localStorage.getItem('wb.engine')) ? localStorage.getItem('wb.engine') : 'claude', permission_mode:'acceptEdits', model:'', effort:localStorage.getItem('wb.effort')||'', use_worktree:false, ssh_id:0},
   }; },
   computed:{
-    canSend(){ return !!(this.curProject && (this.draft.ssh_id ? this.selSsh : this.executionSource)
+    canSend(){ return !!(!this.submitting && this.curProject && (this.draft.ssh_id ? this.selSsh : this.executionSource)
       && this.draft.prompt.trim() && this.draftImgs.every(a=>a.path)); },
     // 预热的设置：与发送时完全一致，后端才会用上预建的会话；远程 / worktree 任务不预热。
     // 两个引擎都预热：另一个引擎按「切换过去后」的设置（模型回到默认，思考 / 权限不支持就回到默认），切换后马上提问也不用等
@@ -44,12 +44,37 @@ export default {
     async submit(runNow){
       if (!this.canSend) return;
       const d=this.draft;
-      const t = await api('/api/tasks',{method:'POST', body:{project:this.cur, prompt:d.prompt, permission_mode:d.permission_mode,
-                                                           model:d.model, effort:d.effort, use_worktree:d.use_worktree && !d.ssh_id, ssh_id:d.ssh_id>0?d.ssh_id:0, engine:d.engine, run_now:runNow,
-                                                           source_path:this.executionSource?.path || '', images:this.draftImgs.map(a=>a.path)}});
-      d.prompt=''; this.clearAtts(this.draftImgs); this.$nextTick(()=>this.grow(this.$refs.promptInput));
-      await this.refreshTasks();
-      if (runNow) this.openTask(t.id);
+      const body={project:this.cur, prompt:d.prompt, permission_mode:d.permission_mode,
+        model:d.model, effort:d.effort, use_worktree:d.use_worktree && !d.ssh_id, ssh_id:d.ssh_id>0?d.ssh_id:0,
+        engine:d.engine, run_now:runNow, source_path:this.executionSource?.path || '', images:this.draftImgs.map(a=>a.path)};
+      this.submitting=true;
+      try{
+        let result;
+        if (runNow){
+          const fingerprint=JSON.stringify(body);
+          if (this.draftRequest?.fingerprint!==fingerprint)
+            this.draftRequest={fingerprint,id:crypto.randomUUID()};
+          result=await api('/api/dispatch',{method:'POST',body:{...body,request_id:this.draftRequest.id}});
+        }else{
+          await api('/api/tasks',{method:'POST',body});
+        }
+        this.draftRequest=null;
+        if (d.prompt===body.prompt){
+          d.prompt='';
+          for (let i=this.draftImgs.length-1;i>=0;i--){
+            if (body.images.includes(this.draftImgs[i].path)) this.removeAtt(this.draftImgs,i);
+          }
+          this.$nextTick(()=>this.grow(this.$refs.promptInput));
+        }
+        if (result?.group && this.cur===body.project && !this.sel){
+          this.tq='';
+          this.showDispatchGroup(result.group);
+        }
+        this.refreshTasks().catch(()=>{});
+        if (result?.task && this.cur===body.project && !this.sel) await this.openTask(result.task.id);
+      }finally{
+        this.submitting=false;
+      }
     },
   },
 };

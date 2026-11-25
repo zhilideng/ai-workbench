@@ -42,6 +42,7 @@ def create_app(on_runner: Optional[callable] = None, warm: bool = False) -> Fast
             on_runner(app.state.runner)
         if warm:
             asyncio.create_task(app.state.runner.warm())
+        await app.state.runner.start_ready()
         yield
         await app.state.runner.shutdown()
 
