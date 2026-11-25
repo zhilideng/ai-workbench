@@ -110,6 +110,10 @@ def send(o):
     sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
 def note(method, **p):
     send({{"method": method, "params": p}})
+if sys.argv[1:2] == ["exec"]:
+    send({{"type": "thread.started", "thread_id": "fallback"}})
+    send({{"type": "turn.completed"}})
+    sys.exit(0)
 turns = threads = 0
 waiting = None   # 等待审批结果的轮次 (threadId, turnId)
 for raw in sys.stdin:
@@ -125,6 +129,9 @@ for raw in sys.stdin:
         continue
     meth, p = m["method"], m.get("params") or {{}}
     if meth == "thread/start":
+        if p.get("model") == "test-fd-error":
+            send({{"id": m["id"], "error": {{"message": "Too many open files (os error 24)"}}}})
+            continue
         threads += 1
         send({{"id": m["id"], "result": {{"thread": {{"id": "th-" + "ABCDEFGH"[threads - 1]}}}}}})
     elif meth == "turn/start":
@@ -385,6 +392,45 @@ def test_codex_prewarm(client, tmp_path, monkeypatch):
     assert [r.get("method") for r in reqs()].count("thread/resume") == 1
     assert [r for r in reqs() if r.get("method") == "turn/start"][-1]["params"]["threadId"] == "th-OLD"
     find_bin.cache_clear()
+
+
+def test_codex_recovers_from_file_descriptor_exhaustion(client, tmp_path, monkeypatch):
+    import sys
+
+    from workbench.engines import codex_server
+
+    fake = tmp_path / "codex"
+    fake.write_text(FAKE_APP_SERVER.format(python=sys.executable))
+    fake.chmod(0o755)
+    monkeypatch.setenv("CODEX_BIN", str(fake))
+    monkeypatch.setattr(codex_server, "RECYCLE_SECONDS", 0.05, raising=False)
+    find_bin.cache_clear()
+
+    try:
+        body = {"project": "alpha", "prompt": "hi", "engine": "codex", "run_now": True}
+        active_id = client.post("/api/tasks", json={**body, "prompt": "slow"}).json()["id"]
+        log = tmp_path / "codex.log"
+        _wait_log(log, lambda s: '"turn/start"' in s)
+        old_server = codex_server.get_server()
+        old_proc = old_server.proc
+
+        failed_id = client.post("/api/tasks", json={**body, "model": "test-fd-error"}).json()["id"]
+        recovered = _wait(client, failed_id)
+        assert recovered["status"] == "review" and recovered["session_id"] == "fallback"
+        assert old_server.proc is old_proc and old_server.alive
+        assert client.get(f"/api/tasks/{active_id}").json()["status"] == "running"
+
+        client.post(f"/api/tasks/{active_id}/cancel")
+        assert _wait(client, active_id)["status"] == "cancelled"
+        deadline = time.monotonic() + 3
+        while old_server.alive and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not old_server.alive
+        next_id = client.post("/api/tasks", json=body).json()["id"]
+        assert _wait(client, next_id)["status"] == "review"
+        assert log.read_text().count('"initialize"') == 2
+    finally:
+        find_bin.cache_clear()
 
 
 def test_claude_prewarm(client, tmp_path, monkeypatch):

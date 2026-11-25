@@ -12,6 +12,7 @@ item.*、turn.completed / turn.failed），外加工作台事件：逐字输出 
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -24,6 +25,8 @@ from workbench.engines.base import ServerUnavailable, TurnHandle
 
 log = logging.getLogger("workbench.prewarm")   # 预热过程写进应用日志，排查「为什么慢」用
 IDLE_SECONDS = 15 * 60          # 没有任务在跑超过这么久就退出，下次发消息时再启动
+SESSION_LOAD_LIMIT = 12         # 常驻进程反复加载会话会累积文件句柄，达到限额后在空闲时回收
+RECYCLE_SECONDS = 1
 MAX_SPARES = 2                  # 预建会话的上限（不同目录 / 设置各算一个）
 REQUEST_TIMEOUT = 60            # 启动、初始化与单个请求的超时
 # 权限模式 -> (会话沙箱, 单轮沙箱策略, 审批策略)，参照 t3code 的运行模式
@@ -113,6 +116,8 @@ class CodexServer:
         self.next_id = 0
         self.lock = asyncio.Lock()
         self.idle: Optional[asyncio.TimerHandle] = None
+        self.session_loads = 0
+        self.opening_turns = 0
 
     # ---- 进程
     @property
@@ -132,6 +137,7 @@ class CodexServer:
             except OSError as e:
                 raise ServerUnavailable(f"无法启动 codex app-server：{e}") from e
             self.loaded.clear()
+            self.session_loads = 0
             asyncio.create_task(self._read(self.proc))
             try:
                 await self.request("initialize", {"clientInfo": {"name": "workbench", "version": "1.0"}})
@@ -162,8 +168,20 @@ class CodexServer:
         if self.idle:
             self.idle.cancel()
             self.idle = None
-        if not self.queues and self.alive:
-            self.idle = asyncio.get_running_loop().call_later(IDLE_SECONDS, lambda: asyncio.create_task(self.close()))
+        if not self.queues and not self.opening_turns and self.alive:
+            proc = self.proc
+            delay = RECYCLE_SECONDS if self.session_loads >= SESSION_LOAD_LIMIT else IDLE_SECONDS
+            self.idle = asyncio.get_running_loop().call_later(
+                delay, lambda: asyncio.create_task(self._close_when_idle(proc)))
+
+    async def _close_when_idle(self, proc: asyncio.subprocess.Process) -> None:
+        async with self.lock:
+            if self.proc is not proc or self.queues or self.opening_turns:
+                return
+            if self.pending:
+                self._touch()
+                return
+            await self.close()
 
     # ---- JSON-RPC
     def _send(self, obj: dict) -> None:
@@ -176,12 +194,24 @@ class CodexServer:
         self.next_id += 1
         rid = self.next_id
         fut = self.pending[rid] = asyncio.get_running_loop().create_future()
-        self._send({"jsonrpc": "2.0", "id": rid, "method": method, **({"params": params} if params else {})})
-        await self.proc.stdin.drain()
+        opens_session = method in ("thread/start", "thread/resume")
+        if opens_session:
+            self.session_loads += 1
         try:
+            self._send({"jsonrpc": "2.0", "id": rid, "method": method, **({"params": params} if params else {})})
+            await self.proc.stdin.drain()
             return await asyncio.wait_for(fut, timeout)
+        except (RuntimeError, OSError) as e:
+            if (opens_session or method == "turn/start") and (
+                "too many open files" in str(e).lower() or getattr(e, "errno", None) == errno.EMFILE
+            ):
+                self.session_loads = max(self.session_loads, SESSION_LOAD_LIMIT)
+                raise ServerUnavailable("Codex 常驻进程已达到文件句柄上限，空闲时将自动回收") from e
+            raise
         finally:
             self.pending.pop(rid, None)
+            if opens_session:
+                self._touch()
 
     def respond(self, request_id, result: Optional[dict] = None, error: Optional[str] = None) -> None:
         msg = {"jsonrpc": "2.0", "id": request_id}
@@ -190,6 +220,8 @@ class CodexServer:
 
     async def _read(self, proc) -> None:
         async for raw in proc.stdout:
+            if self.proc is not None and self.proc is not proc:
+                return
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -211,7 +243,9 @@ class CodexServer:
                 q = self.queues.get((msg.get("params") or {}).get("threadId"))
                 if q:
                     q.put_nowait(msg)
-        # 进程退出：唤醒所有等待者
+        if self.proc is not None and self.proc is not proc:
+            return
+        # 进程退出：唤醒该进程的等待者
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_exception(RuntimeError("codex app-server 已退出"))
@@ -248,6 +282,7 @@ class CodexServer:
         for t in [*self.spares.values(), *self.resuming.values()]:
             t.cancel()
         self.spares.clear()
+        self.spare_since.clear()
         self.resuming.clear()
 
     def _background(self, coro) -> asyncio.Task:
@@ -299,11 +334,7 @@ class CodexServer:
         self.resuming[resume_sid] = self._background(run())
 
     # ---- 执行一轮
-    async def turn(self, task: dict, prompt: str, resume_sid: Optional[str], images: list[str], cwd: str,
-                   instructions: str, handle: TurnHandle, uploads_dir: str = "") -> AsyncIterator[str]:
-        """发送一条消息，按 `codex exec --json` 的格式逐行产出事件。"""
-        await self.ensure()   # 失败抛 ServerUnavailable
-        key, thread, turn_params = self.settings(task, cwd, instructions)
+    async def _open_thread(self, key: str, thread: dict, resume_sid: Optional[str]) -> tuple[str, bool]:
         tid, warmed = resume_sid, False
         if tid:
             pending = self.resuming.pop(tid, None)
@@ -331,18 +362,31 @@ class CodexServer:
             if not tid:
                 tid = (await self.request("thread/start", thread))["thread"]["id"]
         self.loaded.add(tid)
-        if tid in self.queues:
-            raise RuntimeError("该会话正在执行")
-        q = self.queues[tid] = asyncio.Queue()
+        return tid, warmed
+
+    async def turn(self, task: dict, prompt: str, resume_sid: Optional[str], images: list[str], cwd: str,
+                   instructions: str, handle: TurnHandle, uploads_dir: str = "") -> AsyncIterator[str]:
+        """发送一条消息，按 `codex exec --json` 的格式逐行产出事件。"""
+        self.opening_turns += 1
         self._touch()
+        try:
+            await self.ensure()   # 失败抛 ServerUnavailable
+            key, thread, turn_params = self.settings(task, cwd, instructions)
+            tid, warmed = await self._open_thread(key, thread, resume_sid)
+            if tid in self.queues:
+                raise RuntimeError("该会话正在执行")
+            q = self.queues[tid] = asyncio.Queue()
+        finally:
+            self.opening_turns -= 1
+            self._touch()
         approvals: dict[str, object] = {}   # 界面上的审批编号 -> app-server 请求 id
         try:
-            yield _line({"type": "thread.started", "thread_id": tid})
             inputs = [{"type": "text", "text": prompt or "请查看附带的图片。", "text_elements": []}]
             inputs += [{"type": "localImage", "path": p} for p in images]
             # 预建会话的设置与这一轮完全一致，第一轮不再重复传（实测首字更稳定）；其余情况带上设置，中途改了也能生效
             params = {"threadId": tid, "input": inputs, **({} if warmed else turn_params)}
             res = await self.request("turn/start", params)
+            yield _line({"type": "thread.started", "thread_id": tid})
             turn_id = (res.get("turn") or {}).get("id")
             handle.interrupt = lambda: self.request("turn/interrupt", {"threadId": tid, "turnId": turn_id})
 
