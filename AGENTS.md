@@ -76,6 +76,7 @@
 
 ## Git 提交规范
 
+- 每次提交代码前先拉取远端最新代码（`git pull --rebase origin <分支>`），在最新代码上解决冲突并重新运行测试后再提交，避免代码冲突；本地有未提交改动时先暂存或提交，不得丢弃用户改动。
 - 提交标题使用 `type(scope): 中文说明`，例如 `fix(runner): 修复远程任务停止后状态未更新`、`feat(web): 增加任务搜索高亮`。
 - `type` 使用 `feat`、`fix`、`refactor`、`docs`、`test`、`build`、`ci`、`chore`、`perf` 或 `revert`。
 - `scope` 必填，使用模块标识：`core`、`db`、`engines`、`ssh`、`services`、`runner`、`api`、`desktop`、`web`、`build`、`release`、`docs` 或 `repo`；多模块变更使用主要受影响模块，无法归属时使用 `repo`。
