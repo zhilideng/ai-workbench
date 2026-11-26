@@ -79,9 +79,15 @@ _DATA_TOOLS = {
     "search_documents": "搜索文档", "get_document": "读取文档", "read_document": "读取文档",
     "list_records": "读取数据记录", "read_records": "读取数据记录",
 }
-_DATA_STATUS = {
-    "starting": "running", "connecting": "running", "ready": "done", "connected": "done",
-    "cancelled": "interrupted", "failed": "failed", "needs-auth": "failed", "authenticationRequired": "failed",
+_MCP_STARTUP_STATUS = {
+    "starting": ("初始化工具服务", "running"),
+    "connecting": ("初始化工具服务", "running"),
+    "ready": ("工具服务已就绪", "done"),
+    "connected": ("工具服务已就绪", "done"),
+    "cancelled": ("工具服务初始化已取消", "interrupted"),
+    "failed": ("工具服务初始化失败", "failed"),
+    "needs-auth": ("工具服务需要认证", "failed"),
+    "authenticationRequired": ("工具服务需要认证", "failed"),
 }
 _REMOTE_ACTIONS = {"connect": "准备 SSH 连接", "upload": "传输任务附件"}
 _AGENT_TOOLS = {
@@ -322,9 +328,8 @@ def activity_updates(event: dict) -> Iterator[dict]:
             if step in _REMOTE_ACTIONS and event.get("state") in ("running", "done", "failed", "interrupted"):
                 yield row(_REMOTE_ACTIONS[step], event["state"], f"remote:{step}", operation=True)
         elif action == "mcp_status":
-            if state := _DATA_STATUS.get(event.get("status")):
-                label = "数据源需要认证" if event.get("status") == "authenticationRequired" else "连接数据源"
-                yield row(label, state, f"mcp:{event.get('source', '')}")
+            if startup := _MCP_STARTUP_STATUS.get(event.get("status")):
+                yield row(*startup, f"mcp:{event.get('source', '')}")
         elif action == "end":
             label, state = {
                 "success": ("本轮执行完成", "done"), "error": ("本轮执行失败", "failed"),
@@ -372,9 +377,8 @@ def activity_updates(event: dict) -> Iterator[dict]:
 
     if kind == "system" and event.get("subtype") == "init":
         for source in event.get("mcp_servers") or []:
-            if isinstance(source, dict) and (state := _DATA_STATUS.get(source.get("status"))):
-                label = "数据源需要认证" if source["status"] == "needs-auth" else "连接数据源"
-                yield row(label, state, f"mcp:{source.get('name', '')}")
+            if isinstance(source, dict) and (startup := _MCP_STARTUP_STATUS.get(source.get("status"))):
+                yield row(*startup, f"mcp:{source.get('name', '')}")
     elif kind in ("assistant", "user"):
         blocks = (event.get("message") or {}).get("content")
         for block in blocks if isinstance(blocks, list) else ():

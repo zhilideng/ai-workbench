@@ -147,9 +147,31 @@ def test_run_activity_describes_shell_and_connector_operations():
         "id": "a1", "type": "other", "item_type": "collabAgentToolCall", "raw": {"tool": "wait"},
     }})
     assert (row["label"], row["state"]) == ("等待子任务", "running")
-    row, = activity_updates({"type": "system", "subtype": "init",
-                             "mcp_servers": [{"name": "docs", "status": "connected"}]})
-    assert (row["label"], row["state"]) == ("连接数据源", "done")
+
+
+def test_run_activity_distinguishes_tool_startup_from_data_source_connections():
+    from workbench.services.run_activity import activity_updates
+
+    for status, label, state in (
+        ("starting", "初始化工具服务", "running"),
+        ("ready", "工具服务已就绪", "done"),
+        ("failed", "工具服务初始化失败", "failed"),
+        ("authenticationRequired", "工具服务需要认证", "failed"),
+        ("cancelled", "工具服务初始化已取消", "interrupted"),
+    ):
+        row, = activity_updates({"type": "wb", "subtype": "mcp_status", "source": ":docs", "status": status})
+        assert (row["label"], row["state"], row["key"], row.get("operation")) == (label, state, "mcp::docs", None)
+
+    rows = list(activity_updates({"type": "system", "subtype": "init", "mcp_servers": [
+        {"name": "docs", "status": "connected"}, {"name": "repo", "status": "needs-auth"},
+    ]}))
+    assert [(row["label"], row["state"]) for row in rows] == [
+        ("工具服务已就绪", "done"), ("工具服务需要认证", "failed"),
+    ]
+    row, = activity_updates({"type": "item.completed", "item": {
+        "id": "c", "type": "mcp_tool_call", "tool": "connect_database", "status": "completed",
+    }})
+    assert (row["label"], row["state"], row["operation"]) == ("连接数据源", "done", True)
 
 
 def test_validation_errors(client):

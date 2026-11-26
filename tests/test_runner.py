@@ -234,7 +234,7 @@ def test_codex_app_server(client, tmp_path, monkeypatch):
     assert next(row["label"] for row in activity if row["key"] == "item:c1") == "列出文件 · /p"
     assert next(row["label"] for row in activity if row["key"] == "item:r1") == "思考 · 先看目录"
     assert [(row["label"], row["state"]) for row in activity if row["key"].startswith("mcp:")] == [
-        ("连接数据源", "running"), ("连接数据源", "done"),
+        ("初始化工具服务", "running"), ("工具服务已就绪", "done"),
     ]
     ev = _events(client, t)
     assert [e["text"] for e in ev if e.get("subtype") == "delta"] == ["你", "好"]   # 逐字输出
