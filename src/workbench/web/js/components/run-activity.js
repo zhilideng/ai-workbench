@@ -113,6 +113,8 @@ export default {
     },
     showDetails(e){
       if (e.pointerType !== 'mouse') return;
+      this.cancelDetailsClose();
+      if (this.showing) return;
       this.showing = true;
       if (!this.running && !this.loaded) this.pullActivity();
       this.$nextTick(()=>this.placeDetails(true));
@@ -120,7 +122,16 @@ export default {
       window.addEventListener('resize', this.trackDetails);
       window.addEventListener('blur', this.hideDetails);
     },
+    cancelDetailsClose(){
+      clearTimeout(this._detailsCloseTimer);
+    },
+    queueDetailsClose(e){
+      if (e.pointerType !== 'mouse') return;
+      this.cancelDetailsClose();
+      this._detailsCloseTimer = setTimeout(this.hideDetails, 180);
+    },
     hideDetails(){
+      this.cancelDetailsClose();
       this.showing = false;
       window.removeEventListener('scroll', this.trackDetails, true);
       window.removeEventListener('resize', this.trackDetails);
@@ -128,7 +139,7 @@ export default {
     },
     trackDetails(e){
       if (e.target === this.$refs.detailsScroll) return;
-      if (this.$refs.preview?.matches(':hover')) this.placeDetails();
+      if (this.$refs.preview?.matches(':hover') || this.$refs.details?.matches(':hover')) this.placeDetails();
       else this.hideDetails();
     },
     placeDetails(followLatest = false){
@@ -141,13 +152,13 @@ export default {
       const left = box.left - gap - width >= gap;
       const minTop = gap;
       const maxTop = Math.max(gap, innerHeight - height - gap);
-      const preferredTop = right || left ? box.top
-        : innerHeight - box.bottom >= box.top ? box.bottom + gap : box.top - height - gap;
+      const above = box.top > innerHeight - box.bottom;
+      const preferredTop = right || left ? box.top : above ? box.top - height - gap : box.bottom + gap;
       const top = Math.min(maxTop, Math.max(minTop, preferredTop));
       const x = right ? box.right + gap : left ? box.left - gap - width
         : Math.min(innerWidth - width - gap, Math.max(gap, box.left));
-      this.side = right ? 'right' : left ? 'left' : '';
-      this.position = {left:x+'px', top:top+'px',
+      this.side = right ? 'right' : left ? 'left' : above ? 'above' : 'below';
+      this.position = {left:x+'px', top:top+'px', '--activity-gap':gap+'px',
                        '--activity-tip':Math.min(height - 12, Math.max(12, box.top + box.height / 2 - top))+'px'};
       if (followLatest){
         const scroll = this.$refs.detailsScroll;
@@ -189,7 +200,7 @@ export default {
     </section>
     <div ref="preview" class="activity-preview" :class="{showing, compact:!running}"
          :aria-label="running ? '最近三条执行日志' : '查看本轮执行过程'"
-         @pointerenter="showDetails" @pointerleave="hideDetails" @wheel="scrollDetails">
+         @pointerenter="showDetails" @pointerleave="queueDetailsClose" @wheel="scrollDetails">
       <activity-rows v-if="running" :rows="recentRows" timed></activity-rows>
       <template v-else><ic n="list" :s="13"></ic>执行过程</template>
     </div>
@@ -198,7 +209,8 @@ export default {
       <slot></slot>
     </div>
     <teleport to="body">
-      <div v-if="showing" ref="details" class="activity-pop" :class="side" :style="position" role="tooltip" aria-label="执行过程">
+      <div v-if="showing" ref="details" class="activity-pop" :class="side" :style="position" role="tooltip" aria-label="执行过程"
+           @pointerenter="cancelDetailsClose" @pointerleave="queueDetailsClose">
         <div ref="detailsScroll" class="activity-details">
           <template v-if="plan.length">
             <div class="activity-heading">执行计划</div>

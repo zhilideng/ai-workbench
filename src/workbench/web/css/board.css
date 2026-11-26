@@ -128,11 +128,19 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .activity-elapsed{display:inline-flex;align-items:center;gap:4px;color:var(--text-2);font-size:11.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .btn.stop-run{color:var(--fail-ink);box-shadow:0 0 0 1px var(--fail-soft),var(--sh-card)}
 .btn.stop-run:hover{color:var(--fail-ink);background:var(--fail-soft)}
-.activity-pop{position:fixed;z-index:35;width:min(460px,calc(100vw - 24px));border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--sh-pop);pointer-events:none}
+.activity-pop{position:fixed;z-index:35;width:min(460px,calc(100vw - 24px));border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--sh-pop)}
 .activity-pop:is(.right,.left)::before{content:'';position:absolute;top:var(--activity-tip);width:12px;height:12px;background:inherit;border:1px solid var(--line);transform:translateY(-50%) rotate(45deg)}
 .activity-pop.right::before{left:-7px;border-top:0;border-right:0}
 .activity-pop.left::before{right:-7px;border-bottom:0;border-left:0}
-.activity-details{max-height:min(340px,calc(100vh - 26px));overflow:auto;padding:9px 13px;border-radius:inherit;scrollbar-width:thin}
+/* 覆盖弹窗与日志区之间的空隙，慢速移动鼠标时也保持悬停。 */
+.activity-pop::after{content:'';position:absolute}
+.activity-pop:is(.right,.left)::after{top:0;bottom:0;width:var(--activity-gap)}
+.activity-pop:is(.above,.below)::after{left:0;right:0;height:var(--activity-gap)}
+.activity-pop.right::after{right:100%}
+.activity-pop.left::after{left:100%}
+.activity-pop.above::after{top:100%}
+.activity-pop.below::after{bottom:100%}
+.activity-details{max-height:min(340px,calc(100vh - 26px));overflow:auto;overscroll-behavior:contain;padding:9px 13px;border-radius:inherit;scrollbar-width:thin}
 .activity-pop .activity-row{column-gap:9px;font-size:12px;min-height:23px;padding:2px 0}
 .activity-pop .activity-label{white-space:normal;overflow-wrap:anywhere}
 .activity-row.current .activity-label{color:var(--run-ink)}
