@@ -24,8 +24,14 @@ def _insert_task(conn, fields: dict[str, Any], now: float) -> int:
 # ---------------------------------------------------------------- tasks
 
 class TaskRepo:
-    SELECT = ("SELECT t.*, COALESCE(s.name, CASE WHEN t.ssh_id THEN '已删除的连接' ELSE '' END) ssh_name "
-              "FROM tasks t LEFT JOIN ssh_conns s ON s.id=t.ssh_id")
+    SELECT = """SELECT t.*, COALESCE(s.name, CASE WHEN t.ssh_id THEN '已删除的连接' ELSE '' END) ssh_name,
+                       CASE WHEN t.status='running' THEN (
+                           SELECT r.id FROM runs r WHERE r.task_id=t.id AND r.status='running' ORDER BY r.id DESC LIMIT 1
+                       ) END active_run_id,
+                       CASE WHEN t.status IN ('review','done','failed','cancelled') THEN (
+                           SELECT MAX(r.id) FROM runs r WHERE r.task_id=t.id
+                       ) END last_run_id
+                FROM tasks t LEFT JOIN ssh_conns s ON s.id=t.ssh_id"""
 
     @staticmethod
     def get(task_id: int) -> Optional[dict]:

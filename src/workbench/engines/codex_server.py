@@ -39,6 +39,7 @@ MODES = {
 # 转给界面的审批请求；其余服务端请求（提问、MCP 表单、外部工具等）工作台不支持，直接拒绝
 APPROVALS = {"item/commandExecution/requestApproval": "command", "item/fileChange/requestApproval": "file"}
 DECISIONS = ("accept", "acceptForSession", "decline", "cancel")
+MCP_STARTUP = "mcpServer/startupStatus/updated"
 
 
 def describe(key: str) -> str:
@@ -74,6 +75,7 @@ def convert_item(item: dict) -> Optional[dict]:
         return {"id": iid, "type": "plan", "text": item.get("text") or ""}
     if t == "commandExecution":
         return {"id": iid, "type": "command_execution", "command": item.get("command") or "", "cwd": item.get("cwd"),
+                "command_actions": item.get("commandActions") or [],
                 "aggregated_output": item.get("aggregatedOutput") or "", "exit_code": item.get("exitCode"),
                 "status": item.get("status"), "duration_ms": item.get("durationMs")}
     if t == "fileChange":
@@ -85,7 +87,7 @@ def convert_item(item: dict) -> Optional[dict]:
         return {"id": iid, "type": "mcp_tool_call", "server": item.get("server") or item.get("namespace") or "",
                 "tool": item.get("tool") or "", "arguments": item.get("arguments") or {},
                 "result": item.get("result") or item.get("contentItems"), "error": item.get("error"),
-                "status": item.get("status")}
+                "status": item.get("status"), "success": item.get("success")}
     if t == "webSearch":
         return {"id": iid, "type": "web_search", "query": item.get("query") or "", "action": item.get("action"),
                 "results": item.get("results")}
@@ -112,6 +114,7 @@ class CodexServer:
         self.spare_since: dict[str, float] = {}            # 设置的键 -> 开始预建的时间（日志用）
         self.resuming: dict[str, asyncio.Task] = {}        # threadId -> 正在后台恢复
         self.queues: dict[str, asyncio.Queue] = {}         # threadId -> 该会话当前轮次的消息
+        self.early_mcp: dict[str, list[dict]] = {}         # thread/start 返回到轮次队列建立之间的连接状态
         self.pending: dict[int, asyncio.Future] = {}
         self.next_id = 0
         self.lock = asyncio.Lock()
@@ -240,9 +243,12 @@ class CodexServer:
                     else:
                         fut.set_result(msg.get("result"))
             else:
-                q = self.queues.get((msg.get("params") or {}).get("threadId"))
+                thread_id = (msg.get("params") or {}).get("threadId")
+                q = self.queues.get(thread_id)
                 if q:
                     q.put_nowait(msg)
+                elif thread_id and self.opening_turns and msg.get("method") == MCP_STARTUP:
+                    self.early_mcp.setdefault(thread_id, []).append(msg)
         if self.proc is not None and self.proc is not proc:
             return
         # 进程退出：唤醒该进程的等待者
@@ -376,8 +382,12 @@ class CodexServer:
             if tid in self.queues:
                 raise RuntimeError("该会话正在执行")
             q = self.queues[tid] = asyncio.Queue()
+            for message in self.early_mcp.pop(tid, []):
+                q.put_nowait(message)
         finally:
             self.opening_turns -= 1
+            if not self.opening_turns:
+                self.early_mcp.clear()
             self._touch()
         approvals: dict[str, object] = {}   # 界面上的审批编号 -> app-server 请求 id
         try:
@@ -418,6 +428,11 @@ class CodexServer:
                                  "reason": p.get("reason") or "", "grant_root": p.get("grantRoot") or ""})
                 elif m == "_decided":
                     yield _line({"type": "wb", "subtype": "approval_done", **p})
+                elif m == "serverRequest/resolved":
+                    aid = next((aid for aid, rid in approvals.items() if rid == p.get("requestId")), None)
+                    if aid is not None:
+                        del approvals[aid]
+                        yield _line({"type": "wb", "subtype": "approval_done", "id": aid, "decision": "expired"})
                 elif m == "turn/started":
                     yield _line({"type": "turn.started"})
                 elif m == "item/agentMessage/delta" and p.get("delta"):
@@ -431,6 +446,9 @@ class CodexServer:
                 elif m == "turn/plan/updated":
                     yield _line({"type": "wb", "subtype": "plan", "explanation": p.get("explanation") or "",
                                  "plan": p.get("plan") or []})
+                elif m == MCP_STARTUP:
+                    source = f"{p.get('environmentId') or ''}:{p.get('name') or ''}"
+                    yield _line({"type": "wb", "subtype": "mcp_status", "source": source, "status": p.get("status")})
                 elif m == "warning" and p.get("message"):
                     yield _line({"type": "wb", "subtype": "warning", "text": p["message"]})
                 elif m == "error" and p.get("willRetry"):

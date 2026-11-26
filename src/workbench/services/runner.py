@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import subprocess
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,21 @@ DEFAULT_IMAGE_PROMPT = "请查看附带的图片。"
 HANDOFF_TURN_CHARS = 4000     # 交接给新会话时，每条历史消息 / 回复最多保留的字数
 HANDOFF_TOTAL_CHARS = 40000   # 交接内容的总上限，超出时丢弃最早的轮次
 log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _remote_step(run_id: int, step: str):
+    runlog.append_wb(run_id, "remote_step", step=step, state="running")
+    state = "failed"
+    try:
+        yield
+    except asyncio.CancelledError:
+        state = "interrupted"
+        raise
+    else:
+        state = "done"
+    finally:
+        runlog.append_wb(run_id, "remote_step", step=step, state=state)
 
 
 def _clip(text: str, n: int) -> str:
@@ -190,8 +206,12 @@ class Runner:
             job.remote = conn
             cwd_label = f"{conn['name']}:{conn['remote_dir'] or '~'}"
             TaskRepo.update(job.task_id, touch=False, workdir=conn["remote_dir"] or "~")
-            await transport.connect(conn)  # 未连接时自动连接；之后上传和执行都复用这条连接
-            rimgs, rdir = await transport.upload_images(conn, images) if images else ([], None)
+            async with _remote_step(job.run_id, "connect"):
+                await transport.connect(conn)  # 未连接时自动连接；之后上传和执行都复用这条连接
+            rimgs, rdir = [], None
+            if images:
+                async with _remote_step(job.run_id, "upload"):
+                    rimgs, rdir = await transport.upload_images(conn, images)
             # 远程任务不附带本机的 SSH 连接说明（命令里的 askpass 路径在服务器上不存在）
             cli = engine.build_cmd(CommandSpec(task, prompt, resume_sid, rimgs, rdir, "", engine.remote_bin(conn)))
             argv, env = transport.exec_argv(conn, cmds.remote_run_cmd(conn, cli, job.run_id, engine.remote_env(task, conn)))
@@ -264,9 +284,11 @@ class Runner:
             job.interrupted = True
             asyncio.create_task(job.handle.interrupt())
 
-    def decide(self, task_id: int, approval_id: str, decision: str) -> None:
+    def decide(self, task_id: int, approval_id: str, decision: str, run_id: Optional[int] = None) -> None:
         """回复常驻进程里的审批请求（批准 / 本会话都批准 / 拒绝）。"""
         job = self.jobs.get(task_id)
+        if job and (job.cancelled or (run_id is not None and job.run_id != run_id)):
+            raise Conflict("这个审批已失效")
         if not job or not job.handle or not job.handle.decide or not job.handle.decide(approval_id, decision):
             raise Conflict("这个审批已处理或已失效")
 
@@ -312,21 +334,19 @@ class Runner:
                             kind = {"text_delta": ("delta", "text"), "thinking_delta": ("thinking_delta", "thinking")}.get(
                                 delta.get("type"))
                             if kind and delta.get(kind[1]) and not ev.get("parent_tool_use_id"):   # 子代理不逐字显示
-                                f.write(json.dumps({"type": "wb", "subtype": kind[0], "text": delta[kind[1]]},
-                                                   ensure_ascii=False) + "\n")
-                                f.flush()
+                                runlog.write_event(f, {"type": "wb", "subtype": kind[0], "text": delta[kind[1]]})
                             continue
-                        f.write(line + "\n")
-                        f.flush()
                         if not isinstance(ev, dict):
+                            f.write(line + "\n")
+                            f.flush()
                             continue
+                        runlog.write_event(f, ev)
                         old_sid = st.sid
                         engine.parse_event(ev, st)
-                        if task.get("parallel_group_id"):
-                            progress = event_progress(engine.name, ev)
-                            if progress is not None and progress != last_progress:
-                                last_progress = progress
-                                TaskRepo.update(job.task_id, touch=False, progress=progress[0], progress_label=progress[1])
+                        progress = event_progress(engine.name, ev)
+                        if progress is not None and progress != last_progress:
+                            last_progress = progress
+                            TaskRepo.update(job.task_id, touch=False, progress=progress[0], progress_label=progress[1])
                         if st.sid and st.sid != old_sid:
                             TaskRepo.update(job.task_id, touch=False, session_id=st.sid, fork_at="")
                 result, cost, status = st.result, st.cost, st.status or "error"

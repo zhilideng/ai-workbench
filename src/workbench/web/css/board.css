@@ -48,7 +48,7 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .board-wrap{flex:1;min-height:0;overflow:auto}
 .board-wrap.kanban{overflow-x:auto;overflow-y:hidden;margin:-8px -10px 0}
 .board-wrap:not(.kanban){padding-bottom:16px}
-.board{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));grid-template-rows:100%;column-gap:var(--gut);min-width:775px;height:100%;min-height:260px;padding:8px 10px 6px}
+.board{display:grid;grid-template-columns:minmax(135px,1fr) minmax(196px,1.3fr) repeat(3,minmax(135px,1fr));grid-template-rows:100%;column-gap:var(--gut);min-width:836px;height:100%;min-height:260px;padding:8px 10px 6px}
 .col{position:relative;z-index:0;display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0}
 .col::after{content:'';position:absolute;inset:-8px -10px -6px;border-radius:16px;border:1.5px dashed transparent;z-index:-1;pointer-events:none;transition:background .15s,border-color .15s}
 .col.can::after{border-color:var(--dash)}
@@ -89,10 +89,56 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .cstate.run{color:var(--run-ink)}
 .cstate .dot{animation:pulse 1.2s infinite}
 .card-foot .btn{margin-left:auto;flex:none}
-/* 执行中的卡片：顶边一道扫过的信号光 */
+/* 执行进度和最近日志 */
 .card.live{box-shadow:0 0 0 1px var(--run-track),var(--sh-card)}
-.card.live::before{content:'';position:absolute;left:14px;right:14px;top:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--run),transparent) no-repeat;background-size:40% 100%;animation:sweep 1.6s ease-in-out infinite}
-@keyframes sweep{from{background-position:-70% 0}to{background-position:170% 0}}
+.run-activity{display:grid;gap:7px;min-width:0}
+.activity-progress{display:flex;align-items:center;gap:8px;min-height:20px;font-size:12px;white-space:nowrap}
+.activity-progress .cstate{display:inline-flex;align-items:center;gap:5px}
+.activity-track{height:7px;min-width:20px;flex:1;overflow:hidden;border-radius:999px;background:var(--run-track)}
+.activity-track>span{display:block;height:100%;border-radius:inherit;background:var(--run);transition:width .25s ease}
+.activity-track.unknown>span{width:36%;animation:activity-sweep 1.5s ease-in-out infinite}
+@keyframes activity-sweep{from{transform:translateX(-100%)}to{transform:translateX(278%)}}
+.activity-percent{min-width:4ch;text-align:right;font-weight:600;color:var(--run-ink);font-variant-numeric:tabular-nums}
+.activity-percent.unknown{color:var(--text-3);font-size:11px;font-weight:500}
+.activity-approval{display:grid;gap:6px;min-width:0;padding:8px;border-radius:8px;background:var(--review-soft);cursor:auto}
+.activity-approval-title{display:flex;align-items:flex-start;gap:5px;color:var(--review-ink);font-size:12px;font-weight:600;overflow-wrap:anywhere}
+.activity-approval-title svg{flex:none;margin-top:2px}
+.activity-approval details{min-width:0;color:var(--text-2);font-size:11.5px;overflow-wrap:anywhere}
+.activity-approval summary{cursor:pointer}
+.activity-approval-command{max-height:100px;overflow:auto;margin:5px 0;padding:5px 7px;border-radius:6px;background:var(--code);color:var(--code-ink);font:inherit;font-family:var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.activity-approval-error{color:var(--fail-ink);font-size:11.5px;overflow-wrap:anywhere}
+.activity-approval-actions{display:flex;justify-content:flex-end;gap:6px}
+.activity-preview{min-width:0;padding:4px 7px;border-radius:8px;background:var(--sunk);transition:background .12s}
+.activity-preview.showing{background:var(--bubble);box-shadow:inset 0 0 0 1px var(--run-track)}
+.activity-preview.compact{justify-self:start;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-3)}
+.activity-rows{list-style:none;margin:0;padding:0}
+.activity-row{display:grid;grid-template-columns:13px minmax(0,1fr);column-gap:7px;align-items:baseline;min-height:21px;color:var(--text-2);font-size:11.5px}
+.activity-rows.timed .activity-row{grid-template-columns:auto 13px minmax(0,1fr)}
+.activity-time{min-width:8ch;font:10.5px/1.5 var(--mono);color:var(--text-3)}
+.activity-mark{width:13px;height:13px;display:inline-grid;place-items:center;align-self:start;margin-top:2px;font-weight:600}
+.activity-mark.done{color:var(--done-ink)}
+.activity-mark.failed{color:var(--fail-ink)}
+.activity-mark.warning{color:var(--review-ink)}
+.activity-spinner{width:11px;height:11px;border:2px dotted var(--run);border-radius:50%;animation:spin 1s linear infinite}
+.activity-pending{width:10px;height:10px;border:2px solid var(--idle);border-radius:50%}
+.activity-label{display:block}
+.activity-preview .activity-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.activity-empty{min-height:21px;color:var(--text-3);font-size:11.5px}
+.activity-foot{margin-top:0}
+.activity-elapsed{display:inline-flex;align-items:center;gap:4px;color:var(--text-2);font-size:11.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.btn.stop-run{color:var(--fail-ink);box-shadow:0 0 0 1px var(--fail-soft),var(--sh-card)}
+.btn.stop-run:hover{color:var(--fail-ink);background:var(--fail-soft)}
+.activity-pop{position:fixed;z-index:35;width:min(460px,calc(100vw - 24px));border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--sh-pop);pointer-events:none}
+.activity-pop:is(.right,.left)::before{content:'';position:absolute;top:var(--activity-tip);width:12px;height:12px;background:inherit;border:1px solid var(--line);transform:translateY(-50%) rotate(45deg)}
+.activity-pop.right::before{left:-7px;border-top:0;border-right:0}
+.activity-pop.left::before{right:-7px;border-bottom:0;border-left:0}
+.activity-details{max-height:min(340px,calc(100vh - 26px));overflow:auto;padding:9px 13px;border-radius:inherit;scrollbar-width:thin}
+.activity-pop .activity-row{column-gap:9px;font-size:12px;min-height:23px;padding:2px 0}
+.activity-pop .activity-label{white-space:normal;overflow-wrap:anywhere}
+.activity-row.current .activity-label{color:var(--run-ink)}
+.activity-heading{margin-bottom:4px;font-size:11px;font-weight:600;color:var(--text-3)}
+.activity-rows+.activity-heading{margin-top:7px;padding-top:7px;border-top:1px solid var(--line)}
+.card.live>.card-foot{min-height:18px;margin-top:0}
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:88px;padding:16px;border-radius:12px;border:1px dashed var(--dash);text-align:center}
 .empty b{font-size:12.5px;font-weight:500;color:var(--text-3)}
 .empty span{font-size:11.5px;color:var(--muted);max-width:220px;line-height:1.5}

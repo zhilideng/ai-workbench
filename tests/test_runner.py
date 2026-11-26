@@ -121,6 +121,7 @@ for raw in sys.stdin:
     log.write(raw); log.flush()
     if "method" not in m:          # 工作台对审批请求的回复
         tid, turn = waiting
+        note("serverRequest/resolved", threadId=tid, requestId=m["id"])
         note("item/completed", threadId=tid, turnId=turn,
              item={{"id": "m2", "type": "agentMessage", "text": "decision=" + m["result"]["decision"]}})
         note("turn/completed", threadId=tid, turn={{"id": turn, "status": "completed"}})
@@ -133,12 +134,16 @@ for raw in sys.stdin:
             send({{"id": m["id"], "error": {{"message": "Too many open files (os error 24)"}}}})
             continue
         threads += 1
-        send({{"id": m["id"], "result": {{"thread": {{"id": "th-" + "ABCDEFGH"[threads - 1]}}}}}})
+        new_tid = "th-" + "ABCDEFGH"[threads - 1]
+        note("mcpServer/startupStatus/updated", threadId=new_tid, name="docs", status="starting")
+        send({{"id": m["id"], "result": {{"thread": {{"id": new_tid}}}}}})
     elif meth == "turn/start":
         turns += 1
         tid, turn = p["threadId"], "turn-%d" % turns
         send({{"id": m["id"], "result": {{"turn": {{"id": turn}}}}}})
         note("turn/started", threadId=tid, turnId=turn)
+        note("mcpServer/startupStatus/updated", threadId=None, name="global", status="starting")
+        note("mcpServer/startupStatus/updated", threadId=tid, name="docs", status="ready")
         text = p["input"][0]["text"]
         if "slow" in text:
             continue   # 等 turn/interrupt
@@ -160,7 +165,9 @@ for raw in sys.stdin:
         for d in ("你", "好"):
             note("item/agentMessage/delta", threadId=tid, turnId=turn, itemId="m1", delta=d)
         note("item/completed", threadId=tid, turnId=turn,
-             item={{"id": "c1", "type": "commandExecution", "command": "ls", "aggregatedOutput": "a.py", "exitCode": 0}})
+             item={{"id": "c1", "type": "commandExecution", "command": "ls /p",
+                    "commandActions": [{{"type": "listFiles", "command": "ls /p", "path": "/p"}}],
+                    "aggregatedOutput": "a.py", "exitCode": 0}})
         note("item/completed", threadId=tid, turnId=turn, item={{"id": "m1", "type": "agentMessage", "text": "你好"}})
         note("thread/tokenUsage/updated", threadId=tid, turnId=turn, tokenUsage={{"last": {{"inputTokens": 5, "outputTokens": 2}}}})
         note("turn/completed", threadId=tid, turn={{"id": turn, "status": "completed"}})
@@ -176,6 +183,38 @@ def _events(client, t, i=-1):
     return client.get(f"/api/runs/{t['runs'][i]['id']}/events").json()["events"]
 
 
+def test_remote_run_keeps_connection_and_transfer_status_on_failure(client, env, monkeypatch):
+    from workbench.ssh import transport
+
+    async def connect(conn):
+        return None
+
+    async def upload(conn, images):
+        raise RuntimeError("测试上传失败")
+
+    monkeypatch.setattr(transport, "connect", connect)
+    monkeypatch.setattr(transport, "upload_images", upload)
+    connection, = client.post("/api/projects/alpha/ssh", json={
+        "name": "测试服务器", "host": "example.test", "remote_dir": "/tmp",
+    }).json()
+    image = env.paths.uploads / "test.png"
+    image.write_bytes(b"fixture")
+    task = client.post("/api/tasks", json={
+        "project": "alpha", "prompt": "远程检查", "engine": "codex", "ssh_id": connection["id"],
+        "images": [str(image)], "run_now": True,
+    }).json()
+    finished = _wait(client, task["id"])
+    assert finished["status"] == "failed"
+    run_id = finished["runs"][0]["id"]
+    activities = client.get(f"/api/runs/{run_id}/events", params={"activity": True}).json()["events"]
+    assert [(r["label"], r["state"]) for r in activities if r["key"].startswith("remote:")] == [
+        ("准备 SSH 连接", "running"), ("准备 SSH 连接", "done"),
+        ("传输任务附件", "running"), ("传输任务附件", "failed"),
+    ]
+    assert activities[-1]["label"] == "本轮执行失败"
+    assert finished["last_run_id"] == run_id
+
+
 def test_codex_app_server(client, tmp_path, monkeypatch):
     import json
     import sys
@@ -189,6 +228,14 @@ def test_codex_app_server(client, tmp_path, monkeypatch):
                                           "run_now": True}).json()["id"]
     t = _wait(client, tid)
     assert t["status"] == "review" and t["session_id"] == "th-A"
+    assert t["progress"] == 100 and t["parallel_group_id"] is None
+    activity = client.get(f"/api/runs/{t['runs'][0]['id']}/events", params={"activity": True}).json()["events"]
+    assert next(row["plan"] for row in activity if "plan" in row) == [{"label": "看目录", "state": "done"}]
+    assert next(row["label"] for row in activity if row["key"] == "item:c1") == "列出文件 · /p"
+    assert next(row["label"] for row in activity if row["key"] == "item:r1") == "思考 · 先看目录"
+    assert [(row["label"], row["state"]) for row in activity if row["key"].startswith("mcp:")] == [
+        ("连接数据源", "running"), ("连接数据源", "done"),
+    ]
     ev = _events(client, t)
     assert [e["text"] for e in ev if e.get("subtype") == "delta"] == ["你", "好"]   # 逐字输出
     done = [e["item"] for e in ev if e.get("type") == "item.completed"]
@@ -215,11 +262,23 @@ def test_codex_app_server(client, tmp_path, monkeypatch):
         assert time.time() < end
         time.sleep(0.05)
     assert appr[0]["kind"] == "command" and appr[0]["command"] == "rm -rf build" and appr[0]["reason"] == "清理"
-    assert client.post(f"/api/tasks/{tid}/approval", json={"id": appr[0]["id"], "decision": "accept"}).json() == {"ok": True}
-    assert client.post(f"/api/tasks/{tid}/approval", json={"id": appr[0]["id"], "decision": "accept"}).status_code == 409
+    run_id = t["runs"][-1]["id"]
+    activity_url = f"/api/runs/{run_id}/events"
+    activity = client.get(activity_url, params={"activity": True}).json()
+    approval = next(row["approval"] for row in activity["events"] if "approval" in row)
+    assert approval == {"id": appr[0]["id"], "kind": "command", "command": "rm -rf build",
+                        "cwd": "/proj", "reason": "清理"}
+    approval_url = f"/api/tasks/{tid}/approval"
+    decision = {"id": approval["id"], "decision": "accept", "run_id": run_id}
+    assert client.post(approval_url, json={**decision, "run_id": run_id - 1}).status_code == 409
+    assert client.post(approval_url, json=decision).json() == {"ok": True}
+    assert client.post(approval_url, json=decision).status_code == 409
     t = _wait(client, tid)
     ev = _events(client, t)
     assert any(e.get("subtype") == "approval_done" and e["decision"] == "accept" for e in ev)
+    updates = client.get(activity_url, params={"activity": True, "offset": activity["offset"]}).json()["events"]
+    results = [row for row in updates if row["key"] == f"approval:{approval['id']}"]
+    assert len(results) == 1 and results[0]["label"] == "操作已批准" and "approval" not in results[0]
     assert t["status"] == "review"
 
     # 停止：中断当前轮次，进程保留
@@ -271,6 +330,8 @@ for raw in sys.stdin:
         if "approve" in text:
             send({{"type": "control_request", "request_id": "perm-1", "request": {{"subtype": "can_use_tool",
                   "tool_name": "Bash", "input": {{"command": "rm -rf build", "description": "清理"}}}}}})
+            if "withdraw" in text:
+                send({{"type": "control_cancel_request", "request_id": "perm-1"}})
             continue
         send({{"type": "stream_event", "event": {{"type": "content_block_delta", "delta": {{"type": "thinking_delta", "thinking": "想"}}}}}})
         send({{"type": "assistant", "message": {{"content": [{{"type": "thinking", "thinking": "想一想", "signature": "s"}}]}}}})
@@ -318,10 +379,18 @@ def test_claude_persistent_session(client, tmp_path, monkeypatch):
     t = _wait(client, tid)
     assert t["status"] == "review" and any(e.get("subtype") == "approval_done" for e in _events(client, t))
 
-    # 停止：发 interrupt，进程保留
-    client.post(f"/api/tasks/{tid}/run", json={"message": "slow"})
-    _wait(client, tid, done=("running",))
-    time.sleep(0.2)
+    # CLI 撤回请求时，当前轮次仍在运行，但卡片上的审批已失效。
+    client.post(f"/api/tasks/{tid}/run", json={"message": "approve withdraw"})
+    t = _wait(client, tid, done=("running",))
+    end = time.time() + 5
+    while True:
+        activity = client.get(f"/api/runs/{t['runs'][-1]['id']}/events", params={"activity": True}).json()
+        if any(row["label"] == "审批已失效" for row in activity["events"]):
+            break
+        assert time.time() < end
+        time.sleep(0.05)
+    assert activity["status"] == "running"
+    assert client.post(f"/api/tasks/{tid}/approval", json={"id": "perm-1", "decision": "accept"}).status_code == 409
     client.post(f"/api/tasks/{tid}/cancel")
     assert _wait(client, tid)["status"] == "cancelled"
 
@@ -330,7 +399,7 @@ def test_claude_persistent_session(client, tmp_path, monkeypatch):
     assert len(starts) == 1   # 四条消息只启动了一个进程
     assert "--permission-prompt-tool" in starts[0] and starts[0][starts[0].index("--session-id") + 1] == sid
     msgs = [json.loads(x) for x in lines if x.startswith("{")]
-    assert [m["message"]["content"] for m in msgs if m["type"] == "user"] == ["hi", "again", "approve this", "slow"]
+    assert [m["message"]["content"] for m in msgs if m["type"] == "user"] == ["hi", "again", "approve this", "approve withdraw"]
     allow = next(m for m in msgs if m["type"] == "control_response")["response"]["response"]
     assert allow == {"behavior": "allow", "updatedInput": {"command": "rm -rf build", "description": "清理"}}
     assert any(m["type"] == "control_request" and m["request"]["subtype"] == "interrupt" for m in msgs)

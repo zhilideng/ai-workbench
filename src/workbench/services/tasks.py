@@ -14,6 +14,7 @@ from workbench.db.repositories import DependencyRepo, RunRepo, SshRepo, TaskRepo
 from workbench.engines import get_engine
 from workbench.services import connections, runlog, uploads
 from workbench.services.projects import project_path, project_sources
+from workbench.services.run_activity import activity_updates
 from workbench.services.runner import Runner, check_dependencies, check_remote_bypass
 from workbench.ssh import commands as cmds
 from workbench.ssh import transport
@@ -284,9 +285,11 @@ def resolve_file(task_id: int, path: str) -> Path:
     raise NotFound("文件不存在或不在任务目录内")
 
 
-def run_events(run_id: int, offset: int = 0) -> dict:
+def run_events(run_id: int, offset: int = 0, activity: bool = False) -> dict:
     r = RunRepo.get(run_id)
     if not r:
         raise NotFound("run 不存在")
     events, offset = runlog.read_from(run_id, offset)
+    if activity:
+        events = [update for event in events for update in activity_updates(event)]
     return {"events": events, "offset": offset, "status": r["status"]}

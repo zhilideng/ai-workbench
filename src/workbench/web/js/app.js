@@ -21,10 +21,11 @@ import tasks from './features/tasks.js';
 
 import icon from './components/icon.js';
 import modelPicker from './components/model-picker.js';
+import runActivity from './components/run-activity.js';
 import statusGlyph from './components/status-glyph.js';
 
 const FEATURES = [format, models, projects, tasks, sidebar, board, composer, conversation, dispatch, logs, attachments, preview, ssh, quota];
-const COMPONENTS = {ic: icon, sg: statusGlyph, 'model-picker': modelPicker};
+const COMPONENTS = {ic: icon, sg: statusGlyph, 'model-picker': modelPicker, 'run-activity': runActivity};
 
 const app = Vue.createApp({
   mixins: FEATURES,

@@ -23,6 +23,135 @@ def test_task_crud(client):
     assert client.get(f"/api/tasks/{t['id']}").status_code == 404
 
 
+def test_run_activity_uses_current_run_and_incremental_offsets(client):
+    import json
+
+    from workbench.db.repositories import RunRepo, TaskRepo
+    from workbench.services import runlog
+
+    task_id = client.post("/api/tasks", json={"project": "alpha", "prompt": "检查"}).json()["id"]
+    old_run = RunRepo.enqueue(task_id, "previous", [])
+    RunRepo.finish(old_run, "success", 0, 0, "")
+    run_id = RunRepo.enqueue(task_id, "current", [])
+    assert client.get("/api/tasks").json()[0]["active_run_id"] is None
+    TaskRepo.update(task_id, status="running")
+    assert client.get("/api/tasks?project=alpha").json()[0]["active_run_id"] == run_id
+
+    url = f"/api/runs/{run_id}/events"
+    runlog.append_wb(run_id, "start", prompt="current")
+    with runlog.path(run_id).open("a", encoding="utf-8") as log:
+        # 旧日志没有时间字段，也能显示已有的步骤。
+        event = {"type": "item.started", "item": {"type": "command_execution", "id": "1", "command": "echo sample"}}
+        log.write(json.dumps(event) + "\n")
+    first = client.get(url, params={"activity": True}).json()
+    start, command = first["events"]
+    assert start["label"] == "开始执行任务" and start["time"] > 0
+    assert command == {
+        "key": "item:1", "time": None, "label": "输出文本", "state": "running", "operation": True,
+    }
+    assert client.get(url).json()["events"][1]["item"]["command"] == "echo sample"
+
+    with runlog.path(run_id).open("a", encoding="utf-8") as log:
+        runlog.write_event(log, {"type": "item.completed", "item": {
+            **event["item"], "exit_code": 1, "aggregated_output": "sample error\n",
+        }})
+    next_page = client.get(url, params={"activity": True, "offset": first["offset"]}).json()
+    assert [(e["key"], e["state"]) for e in next_page["events"]] == [("item:1", "failed")]
+    assert next_page["events"][0]["label"] == "输出文本（退出码 1）"
+    assert "sample error" not in str(next_page["events"])
+    assert client.get(url).json()["events"][-1]["item"]["aggregated_output"] == "sample error\n"
+    assert next_page["offset"] > first["offset"]
+    RunRepo.finish(run_id, "error", 1, 0, "")
+    assert client.get("/api/tasks").json()[0]["active_run_id"] is None
+    TaskRepo.update(task_id, status="failed")
+    assert client.get("/api/tasks").json()[0]["last_run_id"] == run_id
+
+
+def test_run_activity_summarizes_work_and_leaves_raw_output_in_details(client):
+    from workbench.db.repositories import RunRepo
+    from workbench.services import runlog
+
+    task_id = client.post("/api/tasks", json={"project": "alpha", "prompt": "检查"}).json()["id"]
+    run_id = RunRepo.enqueue(task_id, "检查", [])
+    with runlog.path(run_id).open("a", encoding="utf-8") as log:
+        for event in (
+            {"type": "item.completed", "item": {"type": "reasoning", "summary": ["先确定合肥的天气来源。"],
+             "content": ["完整内部记录"]}},
+            {"type": "item.completed", "item": {"type": "agent_message", "phase": "commentary",
+             "text": "我先核对今天的预报。"}},
+            {"type": "item.completed", "item": {"type": "agent_message", "phase": "final_answer", "text": "最终回复"}},
+            {"type": "item.completed", "item": {"type": "web_search", "id": "w",
+             "action": {"type": "search", "queries": ["合肥天气", "合肥今日降雨"]},
+             "results": [{"type": "text_result", "snippet": "网页原始返回"}]}},
+            {"type": "item.completed", "item": {"type": "web_search", "id": "page",
+             "action": {"type": "findInPage", "url": "https://example.test/weather?token=qa-hidden", "pattern": "合肥"}}},
+            {"type": "item.completed", "item": {"type": "command_execution", "id": "c",
+             "command": "/bin/zsh -lc 'API_TOKEN=qa-hidden python3 --version'", "cwd": "/tmp/qa",
+             "aggregated_output": "\x1b[32mPython 3.14\x1b[0m\nAuthorization: Bearer qa-hidden", "exit_code": 0}},
+            {"type": "item.completed", "item": {"type": "file_change", "id": "f",
+             "changes": [{"kind": "update", "path": "src/worker.py"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "b",
+             "input": {"command": "pwd", "description": "检查目录"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b",
+             "content": [{"type": "text", "text": "/tmp/qa"}]}]}},
+        ):
+            runlog.write_event(log, event)
+
+    rows = client.get(f"/api/runs/{run_id}/events", params={"activity": True}).json()["events"]
+    thought, update, search, page, command, changed, bash, result = rows
+    assert thought["label"] == "思考 · 先确定合肥的天气来源。"
+    assert update["label"] == "进展 · 我先核对今天的预报。"
+    assert "operation" not in thought and "operation" not in update
+    assert search["label"] == "搜索网页 · 合肥天气；合肥今日降雨"
+    assert page["label"] == "在网页中查找 · 合肥（example.test/weather）"
+    assert command["label"] == "检查 Python 版本"
+    assert not any(value in str(rows) for value in ("qa-hidden", "网页原始返回", "完整内部记录", "最终回复", "Authorization"))
+    assert changed["label"] == "修改 src/worker.py"
+    assert all(row["operation"] for row in (search, page, command, changed, bash))
+    assert (bash["key"], bash["label"]) == ("tool:b", "检查目录")
+    assert (result["key"], result["state"], result["label"]) == ("tool:b", "done", "")
+
+
+def test_run_activity_describes_shell_and_connector_operations():
+    from workbench.services.run_activity import activity_updates
+
+    def label(command, actions=()):
+        row, = activity_updates({"type": "item.started", "item": {
+            "type": "command_execution", "command": command, "command_actions": actions,
+        }})
+        return row["label"]
+
+    assert label("pnpm install && pnpm run build") == "安装依赖；构建项目"
+    assert label("python -m venv .venv\npython -m pip install example") == "创建虚拟环境；安装依赖"
+    assert label("printf 'test && fake_command' | grep test") == "输出文本；搜索内容"
+    assert label("cat <<'EOF'\nany_text && fake_command\nEOF") == "读取文件"
+    assert label("rg TODO | sort", [
+        {"type": "search", "query": "TODO"}, {"type": "unknown", "command": "sort"},
+    ]) == "搜索内容 · TODO；排序数据"
+    assert label("lsof -i :8765; curl http://localhost:8765/api?secret=qa-hidden") == (
+        "检查打开的文件或端口；请求网页 · localhost:8765/api"
+    )
+    assert label("scp report.txt demo:/tmp; tar -xzf example.tar.gz") == "传输远程文件；解压文件"
+    assert label("gh repo view demo/example && gh issue list") == "读取仓库；读取 Issue"
+    row, = activity_updates({"type": "item.completed", "item": {
+        "id": "m1", "type": "mcp_tool_call", "tool": "list_issues",
+        "arguments": {"owner": "demo", "repo": "example"}, "success": False,
+    }})
+    assert (row["label"], row["state"]) == ("读取 Issue 列表", "failed")
+    row, = activity_updates({"type": "item.started", "item": {
+        "id": "m2", "type": "mcp_tool_call", "server": "documents", "tool": "search",
+        "arguments": {"query": "项目说明"},
+    }})
+    assert row["label"] == "搜索数据 · 项目说明"
+    row, = activity_updates({"type": "item.started", "item": {
+        "id": "a1", "type": "other", "item_type": "collabAgentToolCall", "raw": {"tool": "wait"},
+    }})
+    assert (row["label"], row["state"]) == ("等待子任务", "running")
+    row, = activity_updates({"type": "system", "subtype": "init",
+                             "mcp_servers": [{"name": "docs", "status": "connected"}]})
+    assert (row["label"], row["state"]) == ("连接数据源", "done")
+
+
 def test_validation_errors(client):
     assert client.post("/api/tasks", json={"project": "nope", "prompt": "x"}).status_code == 404
     assert client.post("/api/tasks", json={"project": "alpha", "prompt": " "}).status_code == 400

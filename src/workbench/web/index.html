@@ -255,18 +255,23 @@
               </div>
               <h3>{{ t.title }}</h3>
               <p v-if="dependencyLabel(t)" class="dependency-note">{{ dependencyLabel(t) }}</p>
-              <div class="card-foot" v-if="t.status!=='done' || !cur || t.ssh_id || t.branch">
+              <run-activity v-if="t.status==='running' || t.last_run_id" :key="t.active_run_id || t.last_run_id || 0"
+                :task-id="t.id" :run-id="t.active_run_id || t.last_run_id" :running="t.status==='running'"
+                :progress="t.progress" :progress-label="t.progress_label" :started-at="t.updated_at">
+                <button class="btn sm stop-run" @click.stop="quickCancel(t)" @keydown.enter.stop title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
+              </run-activity>
+              <div class="card-foot" v-if="!['done','running'].includes(t.status) || !cur || t.ssh_id || t.branch">
                 <span class="cf-l">
                   <span v-if="t.status==='failed'" class="cstate fail">失败</span>
                   <span v-else-if="t.status==='cancelled'" class="cstate cancel">已取消</span>
-                  <span v-else-if="isActive(t)" class="cstate run"><span class="dot"></span>{{ statusLabel[t.status] }}</span>
+                  <span v-else-if="t.status==='queued'" class="cstate run"><span class="dot"></span>{{ statusLabel[t.status] }}</span>
                   <span v-if="!cur" class="ctx proj" :title="t.project"><ic n="folder" :s="12"></ic><span class="ell">{{ t.project }}</span></span>
                   <span v-if="t.ssh_id" class="ctx" :title="'在服务器 '+t.ssh_name+' 上执行'"><ic n="server" :s="12"></ic><span class="ell">{{ t.ssh_name }}</span></span>
                   <span v-else-if="t.branch" class="ctx" :title="'worktree 分支 '+t.branch"><ic n="branch" :s="12"></ic><span class="ell mono">{{ t.branch }}</span></span>
                 </span>
                 <button v-if="t.status==='review'" class="btn sm to-done" @click.stop="quickPatch(t,{status:'done'})" title="验收通过，移到「已完成」"><ic n="check" :s="12" :w="2.4"></ic>通过</button>
                 <button v-else-if="t.status==='todo' && !dependencyLabel(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="开始执行"><ic n="play" :s="10"></ic>执行</button>
-                <button v-else-if="isActive(t)" class="btn sm danger" @click.stop="quickCancel(t)" title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
+                <button v-else-if="t.status==='queued'" class="btn sm danger" @click.stop="quickCancel(t)" title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
                 <button v-else-if="(t.status==='failed'||t.status==='cancelled') && !dependencyLabel(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="重新执行"><ic n="retry" :s="12"></ic>重试</button>
               </div>
             </article>
@@ -410,9 +415,9 @@
                   <span v-if="a.reason">原因：{{ a.reason }}</span><span v-if="a.cwd" class="mono">目录：{{ a.cwd }}</span>
                   <span v-if="a.grantRoot" class="mono">申请可写：{{ a.grantRoot }}</span></div>
                 <div class="ap-acts" v-if="!a.decision && r.status==='running'">
-                  <button type="button" class="btn sm primary" @click="decide(a,'accept')" :disabled="a.busy">批准</button>
-                  <button type="button" class="btn sm" @click="decide(a,'acceptForSession')" :disabled="a.busy" title="本会话里同类操作不再询问">本会话都批准</button>
-                  <button type="button" class="btn sm" @click="decide(a,'decline')" :disabled="a.busy" title="拒绝这一步，它会换个办法继续">拒绝</button>
+                  <button type="button" class="btn sm primary" @click="decide(r.id,a,'accept')" :disabled="a.busy">批准</button>
+                  <button type="button" class="btn sm" @click="decide(r.id,a,'acceptForSession')" :disabled="a.busy" title="本会话里同类操作不再询问">本会话都批准</button>
+                  <button type="button" class="btn sm" @click="decide(r.id,a,'decline')" :disabled="a.busy" title="拒绝这一步，它会换个办法继续">拒绝</button>
                 </div>
               </div>
               <div v-for="(e,j) in v.notes" :key="'n'+j" class="note err">{{ e.text }}</div>

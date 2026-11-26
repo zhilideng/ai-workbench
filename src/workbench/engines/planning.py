@@ -38,8 +38,8 @@ def parse_plan(reply: str) -> dict:
     return plan
 
 
-def event_progress(engine: str, event: dict) -> tuple[int, str] | None:
-    """从单轮计划事件提取已完成比例和当前步骤。"""
+def event_plan(engine: str, event: dict) -> list[dict]:
+    """统一单轮计划的步骤名称与状态。"""
     label_key = "step"
     item = event.get("item")
     if event.get("type") == "wb" and event.get("subtype") == "plan":
@@ -53,16 +53,31 @@ def event_progress(engine: str, event: dict) -> tuple[int, str] | None:
                       if isinstance(block, dict) and block.get("name") == "TodoWrite"), [])
         label_key = "content"
     else:
-        return None
-    steps = [step for step in steps if isinstance(step, dict)]
+        return []
+    plan = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step.get("status") == "completed" or step.get("completed") is True:
+            state = "done"
+        elif step.get("status") in ("inProgress", "in_progress"):
+            state = "running"
+        else:
+            state = "pending"
+        label = str(step.get(label_key) or step.get("activeForm") or "")
+        plan.append({"label": label, "state": state, "active_form": str(step.get("activeForm") or label)})
+    return plan
+
+
+def event_progress(engine: str, event: dict) -> tuple[int, str] | None:
+    """从单轮计划事件提取已完成比例和当前步骤。"""
+    steps = event_plan(engine, event)
     if not steps:
         return None
-    done = sum(step.get("status") == "completed" or step.get("completed") is True for step in steps)
-    current = next((step for step in steps if step.get("status") in ("inProgress", "in_progress")), None)
-    current = current or next((step for step in steps if step.get("status") != "completed"
-                               and step.get("completed") is not True), {})
-    label = current.get("activeForm") or current.get(label_key) or ""
-    return round(100 * done / len(steps)), str(label)[:160]
+    done = sum(step["state"] == "done" for step in steps)
+    current = next((step for step in steps if step["state"] == "running"), None)
+    current = current or next((step for step in steps if step["state"] == "pending"), {})
+    return round(100 * done / len(steps)), current.get("active_form", "")[:160]
 
 
 async def plan_with_cli(settings: dict, prompt: str, remote: dict | None) -> dict:

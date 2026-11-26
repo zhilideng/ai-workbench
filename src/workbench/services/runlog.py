@@ -1,9 +1,10 @@
-"""运行日志：每次运行一个 JSONL 文件。CLI 的原始事件原样写入；工作台自己的事件为 {"type": "wb", ...}。"""
+"""运行日志：每次运行一个 JSONL 文件。保留 CLI 事件内容并记录接收时间。"""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, TextIO
 
 from workbench.core.settings import get_settings
 
@@ -14,7 +15,12 @@ def path(run_id: int) -> Path:
 
 def append_wb(run_id: int, subtype: str, **fields) -> None:
     with open(path(run_id), "a", encoding="utf-8") as f:
-        f.write(json.dumps({"type": "wb", "subtype": subtype, **fields}, ensure_ascii=False) + "\n")
+        write_event(f, {"type": "wb", "subtype": subtype, **fields})
+
+
+def write_event(f: TextIO, event: dict) -> None:
+    f.write(json.dumps({**event, "wb_at": time.time()}, ensure_ascii=False) + "\n")
+    f.flush()
 
 
 def events(run_id: int) -> Iterator[dict]:

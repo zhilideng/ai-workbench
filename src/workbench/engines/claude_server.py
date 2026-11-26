@@ -329,7 +329,10 @@ class ClaudeServer:
                                       **approval_view(msg.get("request") or {})}, ensure_ascii=False)
                     continue
                 if t == "control_cancel_request":   # CLI 放弃了这个审批（如被中断）
-                    approvals.pop(msg.get("request_id"), None)
+                    aid = msg.get("request_id")
+                    if approvals.pop(aid, None) is not None:
+                        yield json.dumps({"type": "wb", "subtype": "approval_done", "id": aid,
+                                          "decision": "expired"}, ensure_ascii=False)
                     continue
                 if t == "_decided":
                     yield json.dumps({"type": "wb", "subtype": "approval_done", "id": msg["id"],

@@ -1,7 +1,7 @@
 """请求体模型。"""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -45,8 +45,9 @@ class PrewarmIn(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    id: str            # 审批编号（运行日志里 approval 事件的 id）
-    decision: str      # accept | acceptForSession | decline | cancel
+    id: str  # 运行日志里 approval 事件的 id
+    decision: Literal["accept", "acceptForSession", "decline", "cancel"]
+    run_id: Optional[int] = None  # 拒绝旧轮次的界面操作
 
 
 class RunIn(BaseModel):

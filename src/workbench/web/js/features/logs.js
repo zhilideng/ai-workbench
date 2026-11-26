@@ -168,15 +168,15 @@ export default {
       }
       return {prompt, work, final, notes, tools:work.filter(e=>e.cls==='tool').length, approvals:a.filter(e=>e.cls==='approval')};
     },
-    async decide(a, decision){
+    async decide(runId, a, decision){
       if (a.busy || a.decision) return;
       a.busy=true;
-      try{ await api(`/api/tasks/${this.sel.id}/approval`,{method:'POST', body:{id:a.id, decision}}); a.decision=decision; }
+      try{ await api(`/api/tasks/${this.sel.id}/approval`,{method:'POST', body:{id:a.id, run_id:runId, decision}}); a.decision=decision; }
       catch(e){} finally{ a.busy=false; }
     },
     approvalText(a, running){
       if (!a.decision) return running ? '' : '已失效（未处理，已按拒绝处理）';
-      return {accept:'已批准', acceptForSession:'已批准（本会话同类操作不再询问）', decline:'已拒绝', cancel:'已拒绝并停止'}[a.decision]||a.decision;
+      return {accept:'已批准', acceptForSession:'已批准（本会话同类操作不再询问）', decline:'已拒绝', cancel:'已拒绝并停止', expired:'已失效'}[a.decision]||a.decision;
     },
     workOpen(r){ const v=this.workState[r.id]; return v===undefined ? r.status==='running' : v; },
     toggleWork(r){ this.workState[r.id]=!this.workOpen(r); },

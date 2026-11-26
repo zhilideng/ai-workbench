@@ -53,9 +53,9 @@ async def prewarm_task(task_id: int):
 
 
 @router.post("/{task_id}/approval")
-def approval(task_id: int, body: ApprovalIn, runner: Runner = Depends(get_runner)):
-    """回复 Codex 的审批请求：accept 批准、acceptForSession 本会话都批准、decline 拒绝、cancel 拒绝并停止。"""
-    runner.decide(task_id, body.id, body.decision)
+async def approval(task_id: int, body: ApprovalIn, runner: Runner = Depends(get_runner)):
+    """在运行器所在的事件循环回复 CLI 审批请求。"""
+    runner.decide(task_id, body.id, body.decision, body.run_id)
     return {"ok": True}
 
 
