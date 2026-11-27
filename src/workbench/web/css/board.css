@@ -67,6 +67,10 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .card[draggable=true]{cursor:grab}
 .card[draggable=true]:active{cursor:grabbing}
 .card.dragging{opacity:.4}
+.card-relation{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3)}
+.card-child-tag{padding:1px 6px;border-radius:5px;background:var(--sunk);color:var(--text-2);font-weight:500}
+.card-parent-link{padding:1px 4px;border:0;border-radius:5px;background:none;color:inherit;font:inherit;white-space:nowrap}
+.card-parent-link:hover{background:var(--hover);color:var(--text)}
 .card-top{display:flex;align-items:center;gap:8px;height:20px;font-size:12px;color:var(--muted);min-width:0}
 .eng{display:inline-flex;align-items:center;gap:5px;color:var(--text-3);font-weight:500;flex:none}
 .tid{color:var(--faint);font-variant-numeric:tabular-nums}
@@ -158,6 +162,7 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .st-review{color:var(--review-ink);background:var(--review-soft)}
 .st-done{color:var(--done-ink);background:var(--done-soft)}
 .st-failed,.st-interrupted{color:var(--fail-ink);background:var(--fail-soft)}
+.st-unreported{color:var(--review-ink);background:var(--review-soft)}
 .st-running .dot,.st-queued .dot{animation:pulse 1.2s infinite}
 
 /* 列表 */
@@ -171,4 +176,18 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(
 .list .eng.remote{color:var(--text-3);font-weight:400}
 .row-del{border:0;background:none;color:var(--faint);width:28px;height:28px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center}
 .row-del:disabled{opacity:.3;background:none;color:var(--faint)}
-.dependency-note{margin:3px 0 0;color:var(--text-3);font-size:11.5px;overflow-wrap:anywhere}
+
+/* 列表行内的子会话 */
+.agent-sessions{min-width:0;color:var(--text-3);font-size:11.5px}
+.agent-sessions summary{list-style:none;display:flex;align-items:center;gap:4px;min-height:26px;padding:0 5px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.agent-sessions summary::-webkit-details-marker{display:none}
+.agent-sessions summary .chev{flex:none;transition:transform .15s}
+.agent-sessions[open] summary .chev{transform:rotate(90deg)}
+.agent-count{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+.agent-session-list{list-style:none;margin:0;padding:0;max-height:168px;overflow-y:auto;overscroll-behavior:contain}
+.agent-session{width:100%;display:flex;align-items:center;gap:6px;padding:4px 5px;border:0;border-radius:6px;background:none;color:inherit;text-align:left;font:inherit}
+.agent-session .sti,.agent-session-state{flex:none}
+.agent-session-name{flex:1;min-width:0;color:var(--text-2)}
+.agent-session-state{color:var(--muted);white-space:nowrap}
+.agent-sessions summary:hover,.agent-session:hover{background:var(--hover)}
+.list .agent-sessions{max-width:330px;margin-top:2px}

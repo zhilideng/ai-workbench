@@ -7,7 +7,7 @@ export default {
   }; },
   methods:{
     async run(){
-      if (this.isActive(this.sel) || this.dependencyLabel(this.sel)) return;
+      if (this.isActive(this.sel) || this.sel.agent_id) return;
       if (this.replyImgs.some(a=>!a.path)) return alert('图片还在上传，请稍候');
       const imgs=this.replyImgs.map(a=>a.path);
       const msg=this.followup.trim() || (imgs.length ? '请查看附带的图片。' : '');

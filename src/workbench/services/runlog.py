@@ -14,8 +14,12 @@ def path(run_id: int) -> Path:
 
 
 def append_wb(run_id: int, subtype: str, **fields) -> None:
+    append(run_id, {"type": "wb", "subtype": subtype, **fields})
+
+
+def append(run_id: int, event: dict) -> None:
     with open(path(run_id), "a", encoding="utf-8") as f:
-        write_event(f, {"type": "wb", "subtype": subtype, **fields})
+        write_event(f, event)
 
 
 def write_event(f: TextIO, event: dict) -> None:

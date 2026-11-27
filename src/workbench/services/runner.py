@@ -18,12 +18,13 @@ from typing import Optional
 from workbench.core.errors import BadRequest, Conflict, NotFound
 from workbench.core.settings import get_settings
 from workbench.core.shell import child_env
-from workbench.db.repositories import DependencyRepo, RunRepo, TaskRepo
+from workbench.db.repositories import RunRepo, TaskRepo
 from workbench.engines import REGISTRY, CommandSpec, RunState, get_engine
 from workbench.engines.base import ServerUnavailable, TurnHandle
 from workbench.engines.claude import ROOT_BYPASS_HINT
-from workbench.engines.planning import event_progress
+from workbench.engines.progress import event_progress
 from workbench.services import connections, runlog, uploads
+from workbench.services.agent_cards import AgentCards, reconcile_codex_agents
 from workbench.services.projects import project_path
 from workbench.ssh import commands as cmds
 from workbench.ssh import transport
@@ -120,20 +121,11 @@ def check_remote_bypass(task: dict) -> None:
         raise BadRequest(ROOT_BYPASS_HINT)
 
 
-def check_dependencies(task_id: int) -> list[dict]:
-    prerequisites = DependencyRepo.prerequisites(task_id)
-    waiting = [task["title"] for task in prerequisites if not task["succeeded"]]
-    if waiting:
-        raise Conflict("等待前置任务执行完毕：" + "、".join(waiting))
-    return prerequisites
-
-
 class Runner:
     def __init__(self, max_concurrent: Optional[int] = None):
         self.jobs: dict[int, Job] = {}   # task_id -> Job
-        self.planning: dict[int, asyncio.Task] = {}
         self.sem = asyncio.Semaphore(max_concurrent or get_settings().max_concurrent)
-        self.planning_sem = asyncio.Semaphore(2)  # 拆分使用户能尽早看到卡片，独立于执行名额
+        self.agent_results: asyncio.Task | None = None
         self.stopping = False
 
     # ---- 查询
@@ -142,7 +134,7 @@ class Runner:
 
     @property
     def active_count(self) -> int:
-        return len(self.jobs) + len(self.planning)
+        return len(self.jobs)
 
     # ---- 启动
     async def start(self, task_id: int, message: Optional[str] = None, images: Optional[list[str]] = None) -> int:
@@ -151,16 +143,9 @@ class Runner:
             raise NotFound("任务不存在")
         if self.is_running(task_id) or task["status"] in ("running", "queued"):
             raise Conflict("任务正在执行中")
-        prerequisites = check_dependencies(task_id)
+        if task["agent_id"]:
+            raise Conflict("子会话由 CLI 管理")
         check_remote_bypass(task)
-        recheck = False
-        if message is None and prerequisites and task["parallel_pending"]:
-            previous = RunRepo.latest_id(task_id)
-            if previous is not None:
-                changed = [row["title"] for row in prerequisites if row["run_id"] > previous]
-                names = "、".join(changed or [row["title"] for row in prerequisites])
-                message = f"前置任务「{names}」已更新。检查是否影响你的结果，仅在需要时修正或补做。"
-                recheck = True
         resume = bool(message and task["session_id"])
         history = [] if resume or not message else RunRepo.of_task(task_id)
         if resume or history:  # 有会话就续接；没有会话但有对话记录时，把记录交接给新会话
@@ -168,32 +153,14 @@ class Runner:
         else:
             prompt = (task["description"] or task["title"]) + (f"\n\n补充说明：\n{message}" if message else "")
         cli_prompt = handoff_prompt(history, prompt) if history else prompt
-        if prerequisites and not recheck:
-            names = "、".join(row["title"] for row in prerequisites)
-            cli_prompt = (f"工作台已确认以下前置任务执行成功：{names}。"
-                          "请直接执行下面分配给当前会话的任务，在共享工作区检查所需产物。\n\n" + cli_prompt)
         if not resume:  # 新会话：带上任务首条消息的图片
             images = TaskRepo.images(task) + (images or [])
         images = [i for i in (images or []) if Path(i).is_file()]
         run_id = RunRepo.enqueue(task_id, prompt, images)
-        # 前置任务续接时，等已启动的后置轮次收尾，避免两边同时写共享目录。
-        active = DependencyRepo.active_descendants(task_id) if task.get("parallel_group_id") and self.jobs else []
-        previous_jobs = [self.jobs[tid].aio_task for tid in active if tid in self.jobs and self.jobs[tid].aio_task]
         job = self.jobs[task_id] = Job(task_id, run_id)
         job.aio_task = asyncio.create_task(self._run(job, task, cli_prompt, task["session_id"] if resume else None, images,
-                                                     shown=prompt, after=previous_jobs))
+                                                     shown=prompt))
         return run_id
-
-    async def start_ready(self, group_id: Optional[int] = None) -> None:
-        if self.stopping:
-            return
-        for task_id in DependencyRepo.ready(group_id):
-            try:
-                await self.start(task_id)
-            except Exception as e:  # noqa: BLE001
-                log.warning("无法自动启动任务 %s (%s)", task_id, type(e).__name__)
-                if not self.is_running(task_id):
-                    TaskRepo.update(task_id, status="failed")
 
     async def _spawn(self, job: Job, task: dict, prompt: str, resume_sid: Optional[str], images: list[str],
                      shown: str):
@@ -303,19 +270,19 @@ class Runner:
             runlog.append_wb(run_id, "stderr", text=line.decode(errors="replace"))
 
     async def _run(self, job: Job, task: dict, prompt: str, resume_sid: Optional[str], images: list[str],
-                   shown: str = "", after: Optional[list[asyncio.Task]] = None) -> None:
+                   shown: str = "") -> None:
         status, result, cost, code = "error", "", 0.0, None
         lines = None
         last_progress = None
+        agents = None
         try:
-            if after:
-                await asyncio.wait(after)
             async with self.sem:
                 if job.cancelled:
                     raise asyncio.CancelledError
                 lines, proc, engine, remote = await self._spawn(job, task, prompt, resume_sid, images, shown or prompt)
                 err_task = asyncio.create_task(self._pump_stderr(proc, job.run_id, remote)) if proc else None
                 st = RunState()
+                agents = AgentCards(TaskRepo.get(job.task_id), engine.name)
                 with open(runlog.path(job.run_id), "a", encoding="utf-8") as f:
                     async for raw in lines:
                         if job.cancelled:
@@ -327,6 +294,12 @@ class Runner:
                             ev = json.loads(line)
                         except json.JSONDecodeError:
                             ev = None
+                        if isinstance(ev, dict):
+                            try:
+                                if agents.record(ev):
+                                    continue
+                            except Exception as e:  # noqa: BLE001
+                                log.warning("任务 %s 的子会话事件记录失败 (%s)", job.task_id, type(e).__name__)
                         if isinstance(ev, dict) and ev.get("type") == "stream_event":
                             # 逐字输出：只保留正文和思考的增量，写成精简事件，避免日志被大量分片撑大；
                             # 完整内容随后由 assistant 消息原样写入
@@ -364,12 +337,30 @@ class Runner:
                 await lines.aclose()
             if job.cancelled:
                 status = "cancelled"
+            if agents is not None:
+                try:
+                    agents.close()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("任务 %s 的子会话日志收尾失败 (%s)", job.task_id, type(e).__name__)
             self.jobs.pop(job.task_id, None)
             RunRepo.finish(job.run_id, status, code, cost, result)
             TaskRepo.add_cost(job.task_id, {"success": "review", "cancelled": "cancelled"}.get(status, "failed"), cost)
             runlog.append_wb(job.run_id, "end", status=status, exit_code=code)
-            if status == "success" and task.get("parallel_group_id"):
-                await self.start_ready(task["parallel_group_id"])
+            if agents is not None and agents.engine == "codex" and not task.get("ssh_id"):
+                self._check_agent_results()
+
+    def _check_agent_results(self) -> None:
+        if self.stopping or (self.agent_results and not self.agent_results.done()):
+            return
+        if get_engine("codex").available() and RunRepo.unreported_codex_agents():
+            self.agent_results = asyncio.create_task(self._recover_agent_results())
+
+    @staticmethod
+    async def _recover_agent_results() -> None:
+        try:
+            await reconcile_codex_agents()
+        except Exception as e:  # noqa: BLE001
+            log.warning("读取 Codex 子会话结果失败 (%s)", type(e).__name__)
 
     # ---- 停止
     def cancel(self, task_id: int) -> None:
@@ -402,14 +393,13 @@ class Runner:
                     await engine.warm()
                 except Exception:  # noqa: BLE001
                     pass
+        self._check_agent_results()
 
     async def shutdown(self) -> None:
         self.stopping = True
-        plans = list(self.planning.values())
-        for plan in plans:
-            plan.cancel()
-        if plans:
-            await asyncio.gather(*plans, return_exceptions=True)
+        if self.agent_results is not None:
+            self.agent_results.cancel()
+            await asyncio.gather(self.agent_results, return_exceptions=True)
         for job in list(self.jobs.values()):
             job.cancelled = True
             if job.proc is None:

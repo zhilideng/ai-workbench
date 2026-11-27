@@ -338,7 +338,7 @@ class ClaudeServer:
                     yield json.dumps({"type": "wb", "subtype": "approval_done", "id": msg["id"],
                                       "decision": msg["decision"]}, ensure_ascii=False)
                     continue
-                if t == "system" and msg.get("session_id"):
+                if t == "system" and msg.get("subtype") in (None, "init") and msg.get("session_id"):
                     s.sid = msg["session_id"]
                     self.sessions[s.sid] = s
                 if t == "result":   # 常驻进程报告的是累计费用：换算成这一轮的

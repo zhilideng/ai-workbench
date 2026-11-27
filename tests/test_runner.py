@@ -228,7 +228,7 @@ def test_codex_app_server(client, tmp_path, monkeypatch):
                                           "run_now": True}).json()["id"]
     t = _wait(client, tid)
     assert t["status"] == "review" and t["session_id"] == "th-A"
-    assert t["progress"] == 100 and t["parallel_group_id"] is None
+    assert t["progress"] == 100 and t["parent_task_id"] is None
     activity = client.get(f"/api/runs/{t['runs'][0]['id']}/events", params={"activity": True}).json()["events"]
     assert next(row["plan"] for row in activity if "plan" in row) == [{"label": "看目录", "state": "done"}]
     assert next(row["label"] for row in activity if row["key"] == "item:c1") == "列出文件 · /p"

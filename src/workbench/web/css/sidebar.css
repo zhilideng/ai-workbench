@@ -94,22 +94,10 @@ aside{background:var(--side);border-right:1px solid var(--line);display:flex;fle
 .psw-root{margin-top:4px;border-top:1px solid var(--line-3);border-radius:0 0 7px 7px;color:var(--muted)}
 .psw-root .name{font-size:12px}
 
-/* 并行会话组沿用侧栏原有的字号、卡片和主题色。 */
-.parallel-thread{margin:3px 3px 6px}
-.parallel-head{padding:5px 8px 7px;border-radius:9px;background:var(--run-soft)}
-.parallel-toggle{display:grid;grid-template-columns:14px minmax(0,1fr) 12px;align-items:center;gap:7px;width:100%;min-height:23px;padding:0;border:0;background:transparent;text-align:left;color:var(--run-ink)}
-.parallel-toggle strong{color:var(--text);font-size:13px;font-weight:600}
-.parallel-toggle .chev{color:var(--muted)}
-.parallel-summary{display:flex;justify-content:space-between;gap:6px;margin:1px 0 4px 21px;color:var(--text-3);font-size:11.5px;font-variant-numeric:tabular-nums}
-.parallel-summary b{color:var(--text);font-weight:600}
-.parallel-summary.error,.parallel-state-failed{color:var(--fail-ink)}
-.parallel-track{height:4px;margin-left:21px;overflow:hidden;border-radius:999px;background:var(--run-track)}
-.parallel-track i{display:block;height:100%;border-radius:inherit;background:var(--run)}
-.parallel-children{display:flex;flex-direction:column;gap:3px;margin:4px 0 0 14px;padding-left:6px;border-left:1px solid var(--line-strong)}
-.parallel-children .parallel-child{grid-template-columns:14px minmax(0,1fr) 12px;gap:7px;padding:6px 7px;background:var(--panel)}
-.parallel-child:hover,.parallel-child.on{background:var(--run-soft)}
-.parallel-child .ti-sub{gap:4px}
-.parallel-open{align-self:center;color:var(--muted)}
-.parallel-actions{padding:3px 0}
-.parallel-action-buttons{display:flex;flex-wrap:wrap;gap:4px}
-.parallel-error{margin:0 0 4px;color:var(--fail-ink);font-size:11.5px;overflow-wrap:anywhere}
+.agent-overall{margin:0 12px 6px 27px;font-variant-numeric:tabular-nums}
+.agent-overall-label{display:flex;justify-content:space-between;gap:6px;margin-bottom:4px;font-size:11.5px;color:var(--text-3)}
+.agent-overall-label b{color:var(--text);font-weight:600}
+.agent-overall-track{height:4px;overflow:hidden;border-radius:999px;background:var(--run-track)}
+.agent-overall-track i{display:block;height:100%;border-radius:inherit;background:var(--run);transition:width .2s}
+.agent-children{display:flex;flex-direction:column;margin:2px 3px 5px 18px;padding-left:6px;border-left:1px solid var(--line-strong)}
+.agent-children .titem{padding-block:5px}

@@ -1,6 +1,7 @@
 """任务：创建、查看、修改、删除、发送消息（含编辑历史消息）、停止、读取任务目录里的文件。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import shlex
@@ -10,12 +11,12 @@ from typing import Optional
 
 from workbench.core.errors import BadRequest, Conflict, NotFound, WorkbenchError
 from workbench.core.shell import git
-from workbench.db.repositories import DependencyRepo, RunRepo, SshRepo, TaskRepo
+from workbench.db.repositories import RunRepo, SshRepo, TaskRepo
 from workbench.engines import get_engine
 from workbench.services import connections, runlog, uploads
 from workbench.services.projects import project_path, project_sources
 from workbench.services.run_activity import activity_updates
-from workbench.services.runner import Runner, check_dependencies, check_remote_bypass
+from workbench.services.runner import Runner, check_remote_bypass
 from workbench.ssh import commands as cmds
 from workbench.ssh import transport
 
@@ -36,21 +37,13 @@ def _check_effort(effort: Optional[str]) -> None:
 # ---------------------------------------------------------------- 查询
 
 def list_tasks(project: Optional[str] = None) -> list[dict]:
-    pending: dict[int, list[dict]] = {}
-    for prerequisite in DependencyRepo.waiting(project=project):
-        pending.setdefault(prerequisite.pop("task_id"), []).append(prerequisite)
-    rows = TaskRepo.list(project)
-    for task in rows:
-        task["waiting_for"] = pending.get(task["id"], [])
-    return rows
+    return TaskRepo.list(project)
 
 
 def get_task(task_id: int) -> dict:
     t = TaskRepo.get_view(task_id)
     if not t:
         raise NotFound("任务不存在")
-    t["waiting_for"] = [{key: row[key] for key in ("id", "title", "status")}
-                        for row in DependencyRepo.waiting(task_id)]
     engine = get_engine(t.get("engine"))
     t["image_urls"] = [uploads.url_of(i) for i in TaskRepo.images(t)]
     t["runs"] = RunRepo.summaries(task_id)
@@ -124,29 +117,38 @@ def patch_task(task_id: int, fields: dict) -> dict:
     engine = fields.get("engine")
     fields = {k: v for k, v in fields.items() if k in PATCHABLE and v is not None}
     _check_effort(fields.get("effort"))
-    if fields.get("status") not in (None, "todo"):
-        check_dependencies(task_id)
+    t = TaskRepo.get(task_id)
+    if t and t["agent_id"]:
+        status = fields.get("status")
+        if engine or fields.keys() - {"status"} or status not in ("review", "done"):
+            raise Conflict("子会话由 CLI 管理")
+        if not TaskRepo.set_agent_review_status(task_id, status):
+            raise Conflict("子会话由 CLI 管理")
+        return get_task(task_id)
     fields.update(_engine_fields(task_id, engine))
     TaskRepo.update(task_id, **fields)
     return get_task(task_id)
 
 
-def delete_task(runner: Runner, task_id: int) -> dict:
-    if runner.is_running(task_id):
+async def delete_task(runner: Runner, task_id: int) -> dict:
+    scope = TaskRepo.subtree(task_id)
+    if not scope:
+        return {"ok": True}
+    if any(t["status"] in ("queued", "running") or runner.is_running(t["id"]) for t in scope):
         raise Conflict("任务正在执行，先停止")
-    if DependencyRepo.has_waiting_dependents(task_id):
-        raise Conflict("后续任务正在等待此任务，请先完成它或删除依赖它的任务")
-    t = TaskRepo.get(task_id)
-    if t and t["branch"] and t["workdir"]:
-        # 移除 worktree，但保留分支，避免丢失代码
-        subprocess.run(["git", "worktree", "remove", "--force", t["workdir"]],
-                       cwd=t["source_path"] or project_path(t["project"]), capture_output=True)
-    imgs = TaskRepo.images(t or {})
-    for r in RunRepo.of_task(task_id):
+    root = next(t for t in scope if t["id"] == task_id)
+    if root["parent_task_id"] and runner.is_running(root["parent_task_id"]):
+        raise Conflict("主会话正在执行，稍后再删除子会话")
+    imgs = {image for t in scope for image in TaskRepo.images(t)}
+    for r in TaskRepo.delete(task_id):
         runlog.delete(r["id"])
-        imgs += TaskRepo.images(r)
-    TaskRepo.delete(task_id)
-    uploads.remove(TaskRepo.unreferenced_images(set(imgs)))
+        imgs.update(TaskRepo.images(r))
+    uploads.remove(TaskRepo.unreferenced_images(imgs))
+    for t in scope:
+        if t["branch"] and t["workdir"]:
+            # 移除 worktree，但保留分支，避免丢失代码。
+            await asyncio.to_thread(subprocess.run, ["git", "worktree", "remove", "--force", t["workdir"]],
+                                    cwd=t["source_path"] or project_path(t["project"]), capture_output=True)
     return {"ok": True}
 
 
@@ -176,6 +178,8 @@ def prewarm_task(task_id: int) -> dict:
     t = TaskRepo.get(task_id)
     if not t:
         raise NotFound("任务不存在")
+    if t["agent_id"]:
+        return {"ok": False}
     server = get_engine(t.get("engine")).live_server(t)
     if server is None or t["status"] in ("running", "queued"):
         return {"ok": False}
@@ -195,7 +199,9 @@ async def send(runner: Runner, task_id: int, *, message: Optional[str] = None, m
     edit_run_id：编辑某条已发送的消息——回退到它之前，用新内容重新发送（该条及之后的记录被替换）。"""
     if runner.is_running(task_id):
         raise Conflict("任务正在执行中")
-    check_dependencies(task_id)
+    task = TaskRepo.get(task_id)
+    if task and task["agent_id"]:
+        raise Conflict("请在主会话中继续，子会话由 CLI 管理")
     _check_effort(effort)
     fields = {k: v for k, v in (("model", model), ("effort", effort), ("permission_mode", permission_mode)) if v is not None}
     fields.update(_engine_fields(task_id, engine))

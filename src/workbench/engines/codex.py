@@ -141,6 +141,17 @@ class CodexEngine(Engine):
     async def close(self) -> None:
         await close_server()
 
+    async def agent_turns(self, thread_id: str) -> tuple[list[dict], bool]:
+        """只读取 CLI 历史，不恢复会话或发送新指令。"""
+        server = get_server()
+        await server.ensure()
+        try:
+            result = await server.request("thread/turns/list", {"threadId": thread_id, "limit": 20, "itemsView": "full"},
+                                          timeout=10)
+            return result.get("data") or [], thread_id in server.active_agents
+        finally:
+            server._touch()
+
     def parse_event(self, ev: dict, st: RunState) -> None:
         t = ev.get("type")
         if t == "thread.started":

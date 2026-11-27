@@ -66,54 +66,8 @@
       <div v-for="g in sideGroups" :key="g.key" class="tgrp" :class="{closed:sideClosed[g.key]}">
         <button type="button" class="tgrp-h" @click="toggleGroup(g.key)" :aria-expanded="!sideClosed[g.key]">{{ g.label }}<span class="n">{{ g.items.length }}</span><ic class="chev" n="chevd" :s="12"></ic></button>
         <template v-if="!sideClosed[g.key]">
-          <template v-for="t in g.items.slice(0, g.limit)" :key="t.group ? parallelKey(t.id) : t.id">
-          <section v-if="t.group" :id="'parallel-thread-'+t.id" class="parallel-thread">
-            <div class="parallel-head">
-              <button type="button" class="parallel-toggle" @click="toggleGroup(parallelKey(t.id))"
-                :aria-expanded="!sideClosed[parallelKey(t.id)]" :aria-controls="'parallel-'+t.id" :title="t.group.title">
-                <ic n="layers" :s="14"></ic><strong class="ell">{{ t.group.title }}</strong><ic class="chev" :n="sideClosed[parallelKey(t.id)]?'chevr':'chevd'" :s="12"></ic>
-              </button>
-              <template v-if="t.group.state==='ready'">
-                <div class="parallel-summary">
-                  <span>整体进度&nbsp; {{ t.completed }}/{{ t.total }}</span><b>{{ t.progress }}%</b>
-                </div>
-                <div class="parallel-track" role="progressbar" aria-label="整体进度" :aria-valuenow="t.progress" aria-valuemin="0" aria-valuemax="100">
-                  <i :style="{width:t.progress+'%'}"></i>
-                </div>
-              </template>
-              <p v-else class="parallel-summary" :class="{error:t.group.state==='failed'}" role="status">
-                {{ t.group.state==='planning' ? '正在拆分任务' : '拆分失败' }}
-              </p>
-            </div>
-            <div v-show="!sideClosed[parallelKey(t.id)]" :id="'parallel-'+t.id" class="parallel-children">
-              <button type="button" v-for="child in t.children" :key="child.id" class="titem parallel-child"
-                :class="{on:sel?.id===child.id}" :title="child.title" :aria-current="sel?.id===child.id?'page':null" @click="openTask(child.id)">
-                <ic :n="child.ssh_id?'server':'laptop'" :s="14"></ic>
-                <span class="ti-main">
-                  <span class="ti-title">{{ child.title }}</span>
-                  <span class="ti-sub">{{ engLabel(child.engine) }} #{{ child.id }} ·
-                    <span :class="'parallel-state-'+child.status">{{ parallelTaskState(child) }}</span>
-                  </span>
-                  <span v-if="dependencyLabel(child)" class="dependency-note">{{ dependencyLabel(child) }}</span>
-                </span>
-                <ic class="parallel-open" n="chevr" :s="12"></ic>
-              </button>
-              <div class="parallel-actions" v-if="t.group.state==='failed' || groupErrors[t.id]">
-                <p v-if="t.group.state==='failed' && t.group.error" class="parallel-error">{{ t.group.error }}</p>
-                <p v-if="groupErrors[t.id]" class="parallel-error" role="alert">{{ groupErrors[t.id] }}</p>
-                <div v-if="t.group.state==='failed'" class="parallel-action-buttons">
-                  <button type="button" class="btn sm" @click="changeDispatchGroup(t.group,'retry')" :disabled="!!groupAction[t.id]">
-                    {{ groupAction[t.id]==='retry' ? '正在重试…' : '重试拆分' }}
-                  </button>
-                  <button type="button" class="btn sm" @click="changeDispatchGroup(t.group,'single')" :disabled="!!groupAction[t.id]">
-                    {{ groupAction[t.id]==='single' ? '正在创建…' : '用一个会话继续' }}
-                  </button>
-                  <button v-if="t.group.prompt" type="button" class="btn ghost sm" @click="restoreDispatchPrompt(t.group)" :disabled="!!groupAction[t.id]">还原到输入框</button>
-                </div>
-              </div>
-            </div>
-          </section>
-          <button type="button" v-else class="titem" :class="{on:sel && sel.id===t.id}" @click="openTask(t.id)">
+          <template v-for="t in g.items.slice(0, g.limit)" :key="t.id">
+          <button type="button" class="titem" :class="{on:sel && sel.id===t.id}" @click="openTask(t.id)">
             <sg :s="t.status" :label="statusLabel[t.status]"></sg>
             <span class="ti-main">
               <span class="ti-row"><span class="ti-title">{{ t.title }}</span><span class="ti-time">{{ agoShort(t.updated_at) }}</span></span>
@@ -126,6 +80,23 @@
               </span>
             </span>
           </button>
+          <div v-if="t.overall" class="agent-overall" :title="t.status==='done' ? '主任务已验收，子任务一并完成' : '按 CLI 已报告的子会话计算'">
+            <div class="agent-overall-label" aria-hidden="true">
+              <span>整体进度 {{ t.overall.completed }}/{{ t.overall.total }}</span><b>{{ t.overall.percent }}%</b>
+            </div>
+            <div class="agent-overall-track" role="progressbar" :aria-label="t.status==='done' ? '整体验收进度' : '整体执行进度'"
+              :aria-valuenow="t.overall.percent" :aria-valuetext="'已完成 '+t.overall.completed+' / '+t.overall.total+' 个子会话'">
+              <i :style="{width:t.overall.percent+'%'}"></i>
+            </div>
+          </div>
+          <div v-if="t.children.length" class="agent-children" aria-label="子会话">
+            <button v-for="child in t.children" :key="child.id" type="button" class="titem"
+              :class="{on:sel?.id===child.id}" :title="child.title" @click="openTask(child.id)">
+              <sg :s="displayTaskStatus(child)" :label="statusLabel[displayTaskStatus(child)]"></sg>
+              <span class="ti-main"><span class="ti-title">{{ child.title }}</span>
+                <span class="ti-sub">{{ statusLabel[displayTaskStatus(child)] }}<template v-if="completedChildIds.has(child.id) && !['review','done'].includes(child.status)"> · 原状态 {{ statusLabel[child.status] }}</template></span></span>
+            </button>
+          </div>
           </template>
           <button v-if="g.items.length > g.limit" type="button" class="side-more" @click="sideLimit[g.key]=(sideLimit[g.key]||g.limit)+30">显示更多（{{ g.items.length - g.limit }}）</button>
         </template>
@@ -247,32 +218,38 @@
             </div>
             <div class="col-body">
             <article v-for="t in colVisible(c)" :key="t.id" class="card" :class="{dragging:dragId===t.id, live:t.status==='running'}" @click="openTask(t.id)" tabindex="0" @keydown.enter="openTask(t.id)"
-              :draggable="!isActive(t) && !dependencyLabel(t)" @dragstart="onDragStart($event,t)" @dragend="dragId=null;dropCol=''">
+              :draggable="canDragTask(t)" @dragstart="onDragStart($event,t)" @dragend="dragId=null;dropCol=''">
               <div class="card-top">
                 <span class="eng"><ic :n="t.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(t.engine) }}</span>
                 <span class="tid">#{{ t.id }}</span><span class="time">{{ ago(t.updated_at) }}</span>
-                <button v-if="!isActive(t)" type="button" class="card-del" @click.stop="delTask(t)" @keydown.enter.stop aria-label="删除任务" title="删除任务"><ic n="trash" :s="13"></ic></button>
+                <button v-if="canDeleteTask(t)" type="button" class="card-del" @click.stop="delTask(t)" @keydown.enter.stop aria-label="删除任务" title="删除任务"><ic n="trash" :s="13"></ic></button>
               </div>
               <h3>{{ t.title }}</h3>
-              <p v-if="dependencyLabel(t)" class="dependency-note">{{ dependencyLabel(t) }}</p>
+              <div v-if="isChildTask(t)" class="card-relation">
+                <span class="card-child-tag">子任务</span>
+                <button v-if="t.parent_task_id && tasksById.has(t.parent_task_id)" type="button" class="card-parent-link"
+                  @click.stop="openTask(t.parent_task_id)" @keydown.enter.stop>主任务 #{{ t.parent_task_id }}</button>
+              </div>
+              <div v-else-if="agentChildren.has(t.id)" class="card-relation">主任务 · {{ agentChildren.get(t.id).length }} 个子任务</div>
               <run-activity v-if="t.status==='running' || t.last_run_id" :key="t.active_run_id || t.last_run_id || 0"
                 :task-id="t.id" :run-id="t.active_run_id || t.last_run_id" :running="t.status==='running'"
                 :progress="t.progress" :progress-label="t.progress_label" :started-at="t.updated_at">
-                <button class="btn sm stop-run" @click.stop="quickCancel(t)" @keydown.enter.stop title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
+                <button v-if="!isChildTask(t)" class="btn sm stop-run" @click.stop="quickCancel(t)" @keydown.enter.stop title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
               </run-activity>
-              <div class="card-foot" v-if="!['done','running'].includes(t.status) || !cur || t.ssh_id || t.branch">
+              <div class="card-foot" v-if="!['done','running'].includes(t.status) && (t.status!=='review' || !completedChildIds.has(t.id)) || !cur || t.ssh_id || t.branch">
                 <span class="cf-l">
                   <span v-if="t.status==='failed'" class="cstate fail">失败</span>
                   <span v-else-if="t.status==='cancelled'" class="cstate cancel">已取消</span>
+                  <span v-else-if="t.status==='unreported'" class="cstate st-unreported">结果未确认</span>
                   <span v-else-if="t.status==='queued'" class="cstate run"><span class="dot"></span>{{ statusLabel[t.status] }}</span>
                   <span v-if="!cur" class="ctx proj" :title="t.project"><ic n="folder" :s="12"></ic><span class="ell">{{ t.project }}</span></span>
                   <span v-if="t.ssh_id" class="ctx" :title="'在服务器 '+t.ssh_name+' 上执行'"><ic n="server" :s="12"></ic><span class="ell">{{ t.ssh_name }}</span></span>
                   <span v-else-if="t.branch" class="ctx" :title="'worktree 分支 '+t.branch"><ic n="branch" :s="12"></ic><span class="ell mono">{{ t.branch }}</span></span>
                 </span>
-                <button v-if="t.status==='review'" class="btn sm to-done" @click.stop="quickPatch(t,{status:'done'})" title="验收通过，移到「已完成」"><ic n="check" :s="12" :w="2.4"></ic>通过</button>
-                <button v-else-if="t.status==='todo' && !dependencyLabel(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="开始执行"><ic n="play" :s="10"></ic>执行</button>
-                <button v-else-if="t.status==='queued'" class="btn sm danger" @click.stop="quickCancel(t)" title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
-                <button v-else-if="(t.status==='failed'||t.status==='cancelled') && !dependencyLabel(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="重新执行"><ic n="retry" :s="12"></ic>重试</button>
+                <button v-if="t.status==='review' && !completedChildIds.has(t.id)" class="btn sm to-done" @click.stop="quickPatch(t,{status:'done'})" title="验收通过，移到「已完成」"><ic n="check" :s="12" :w="2.4"></ic>通过</button>
+                <button v-else-if="t.status==='todo' && !isChildTask(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="开始执行"><ic n="play" :s="10"></ic>执行</button>
+                <button v-else-if="t.status==='queued' && !isChildTask(t)" class="btn sm danger" @click.stop="quickCancel(t)" title="停止执行"><ic n="stop" :s="9"></ic>停止</button>
+                <button v-else-if="(t.status==='failed'||t.status==='cancelled') && !isChildTask(t)" class="btn sm to-run" @click.stop="quickRun(t)" title="重新执行"><ic n="retry" :s="12"></ic>重试</button>
               </div>
             </article>
             <div v-if="!colTasks(c).length" class="empty">
@@ -291,17 +268,19 @@
           <table>
             <thead><tr><th style="width:64px">#</th><th>任务</th><th v-if="!cur">项目</th><th>引擎</th><th>状态</th><th>更新</th><th style="width:40px"><span class="sr">操作</span></th></tr></thead>
             <tbody>
-              <tr v-for="t in filteredTasks" :key="t.id" @click="openTask(t.id)">
+              <tr v-for="t in listTasks" :key="t.id" @click="openTask(t.id)">
                 <td class="tid">#{{ t.id }}</td>
-                <td><div class="t">{{ t.title }}</div></td>
+                <td><div class="t">{{ t.title }}</div>
+                  <agent-sessions v-if="agentChildren.has(t.id)" :sessions="agentChildren.get(t.id)" :status-labels="statusLabel"
+                    @open-child="openTask"></agent-sessions></td>
                 <td v-if="!cur" style="color:var(--text-3)">{{ t.project }}</td>
                 <td><span class="eng"><ic :n="t.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(t.engine) }}</span>
                   <span v-if="t.ssh_id" class="eng remote" style="margin-left:10px"><ic n="server" :s="12"></ic>{{ t.ssh_name }}</span></td>
-                <td><span class="stx"><sg :s="t.status"></sg>{{ statusLabel[t.status] }}</span><div v-if="dependencyLabel(t)" class="dependency-note">{{ dependencyLabel(t) }}</div></td>
+                <td><span class="stx"><sg :s="t.status"></sg>{{ statusLabel[t.status] }}</span></td>
                 <td style="color:var(--muted);white-space:nowrap">{{ ago(t.updated_at) }}</td>
-                <td><button type="button" class="row-del" @click.stop="delTask(t)" :disabled="isActive(t)" :title="isActive(t)?'执行中，先停止':'删除任务'" aria-label="删除任务"><ic n="trash" :s="13"></ic></button></td>
+                <td><button type="button" class="row-del" @click.stop="delTask(t)" :disabled="!canDeleteTask(t)" title="删除任务" aria-label="删除任务"><ic n="trash" :s="13"></ic></button></td>
               </tr>
-              <tr v-if="!filteredTasks.length"><td :colspan="cur?6:7" style="text-align:center;color:var(--muted);padding:32px">暂无任务</td></tr>
+              <tr v-if="!listTasks.length"><td :colspan="cur?6:7" style="text-align:center;color:var(--muted);padding:32px">暂无任务</td></tr>
             </tbody>
           </table>
         </div>
@@ -323,14 +302,14 @@
           <button v-if="sel.status==='review'" class="btn primary" @click="patch({status:'done'})"><ic n="check" :s="13"></ic>验收通过</button>
           <button class="btn ghost hide-m" v-if="sel.resume_cmd" @click="copy(sel.resume_cmd,'resume')" title="复制命令，在终端里接着干"><ic n="terminal" :s="14"></ic>{{ copied==='resume' ? '已复制' : '终端接管' }}</button>
           <button class="ibtn" :class="{on:showInfo}" @click="showInfo=!showInfo" aria-label="任务详情" title="任务详情"><ic n="info" :s="15"></ic></button>
-          <button class="ibtn" @click="del" :disabled="isActive(sel)" aria-label="删除任务" title="删除任务"><ic n="trash" :s="15"></ic></button>
+          <button class="ibtn" @click="del" :disabled="!canDeleteTask(sel)" aria-label="删除任务" title="删除任务"><ic n="trash" :s="15"></ic></button>
         </div>
       </header>
       <div class="task-info" v-if="showInfo">
         <span class="k">创建于</span><span>{{ fmtTime(sel.created_at) }}</span>
-        <span class="k">状态</span><span><select v-model="sel.status" @change="patch({status:sel.status})" :disabled="isActive(sel)">
+        <span class="k">状态</span><span><select v-model="sel.status" @change="patch({status:sel.status})" :disabled="isActive(sel) || !!sel.agent_id">
           <option v-for="(v,k) in statusLabel" :value="k" :key="k">{{ v }}</option></select></span>
-        <span class="k">权限模式</span><span><select v-model="sel.permission_mode" @change="patch({permission_mode:sel.permission_mode})">
+        <span class="k">权限模式</span><span><select v-model="sel.permission_mode" :disabled="!!sel.agent_id" @change="patch({permission_mode:sel.permission_mode})">
           <option v-for="m in modesFor(sel.engine)" :value="m.v" :key="m.v">{{ m.l }}</option></select></span>
         <span class="k">工作目录</span><span class="mono" style="font-size:12px;word-break:break-all">{{ sel.ssh_id ? (sel.ssh_name+':'+(sel.workdir||'~')) : (sel.workdir || '（首次执行时确定）') }}</span>
         <span class="k" v-if="sel.resume_cmd">接管命令</span><span v-if="sel.resume_cmd" class="mono" style="font-size:12px;word-break:break-all">{{ sel.resume_cmd }}</span>
@@ -342,8 +321,8 @@
             <span class="chip"><ic :n="sel.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(sel.engine) }}<template v-if="sel.model"> · {{ sel.model }}</template></span>
             <span class="chip remote" v-if="sel.ssh_id" :title="'在服务器 '+(sel.ssh_target||'')+' 上执行，工作目录 '+(sel.workdir||'~')">
               <span class="sdot" :class="{on:sel.ssh_connected, busy:ssh.act[sel.ssh_id]}"></span><ic n="server" :s="12"></ic>{{ sel.ssh_name }}<span class="mono" style="opacity:.75" v-if="sel.ssh_target">{{ sel.ssh_target }}</span>
-              <button v-if="sel.ssh_connected" type="button" class="chip-btn" @click="disconnectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '断开中…' : '断开' }}</button>
-              <button v-else-if="sel.ssh_target" type="button" class="chip-btn" @click="connectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '连接中…' : '连接' }}</button></span>
+              <button v-if="!sel.agent_id && sel.ssh_connected" type="button" class="chip-btn" @click="disconnectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '断开中…' : '断开' }}</button>
+              <button v-else-if="!sel.agent_id && sel.ssh_target" type="button" class="chip-btn" @click="connectFromTask" :disabled="!!ssh.act[sel.ssh_id]">{{ ssh.act[sel.ssh_id] ? '连接中…' : '连接' }}</button></span>
             <span class="chip" v-if="sel.effort"><ic n="brain" :s="12"></ic>思考 {{ effortLabel(sel.effort, sel.engine) }}</span>
             <span class="chip"><ic n="shield" :s="12"></ic>{{ modeOf(sel.engine, sel.permission_mode).s }}</span>
             <span class="chip mono" v-if="sel.branch"><ic n="branch" :s="12"></ic>{{ sel.branch }}</span>
@@ -362,10 +341,10 @@
                 <div class="bubble">{{ sel.description }}</div>
                 <div class="msg-acts">
                   <button type="button" class="mbtn" @click="copy(sel.description,'desc')" :title="copied==='desc'?'已复制':'复制'" aria-label="复制"><ic :n="copied==='desc'?'check':'copy'" :s="13"></ic></button>
-                  <button type="button" class="mbtn" @click="startEdit(0,sel.description)" title="编辑" aria-label="编辑"><ic n="edit" :s="13"></ic></button>
+                  <button type="button" class="mbtn" v-if="!sel.agent_id" @click="startEdit(0,sel.description)" title="编辑" aria-label="编辑"><ic n="edit" :s="13"></ic></button>
                 </div></div>
             </div>
-            <div class="pending-note">{{ dependencyLabel(sel) ? '前置任务成功后自动开始' : '尚未执行 · 按 ↵ 或点击发送开始' }}</div>
+            <div v-if="!sel.agent_id" class="pending-note">尚未执行 · 按 ↵ 或点击发送开始</div>
           </template>
           <template v-for="r in sel.runs" :key="r.id">
             <template v-for="v in [runView(r)]" :key="'v'+r.id">
@@ -382,7 +361,7 @@
                   <div class="msg-acts">
                     <span class="meta" v-if="v.prompt.meta">{{ v.prompt.meta }}</span>
                     <button type="button" class="mbtn" @click="copy(v.prompt.text,'u'+r.id)" :title="copied==='u'+r.id?'已复制':'复制'" aria-label="复制消息"><ic :n="copied==='u'+r.id?'check':'copy'" :s="13"></ic></button>
-                    <button type="button" class="mbtn" @click="startEdit(r.id,v.prompt.text)" :disabled="isActive(sel)" title="编辑并重新发送" aria-label="编辑消息"><ic n="edit" :s="13"></ic></button>
+                    <button type="button" class="mbtn" v-if="!sel.agent_id" @click="startEdit(r.id,v.prompt.text)" :disabled="isActive(sel)" title="编辑并重新发送" aria-label="编辑消息"><ic n="edit" :s="13"></ic></button>
                   </div></div>
               </div>
               <div v-if="v.work.length" class="work" :class="{open:workOpen(r)}">
@@ -427,7 +406,7 @@
               </div>
               <div v-if="r.status==='running'" class="thinking" v-show="!v.work.length"><i></i><i></i><i></i>&nbsp;{{ sel.status==='queued' ? '排队中' : '正在执行' }}</div>
               <div v-else-if="r.status!=='running'" class="run-foot">
-                <span class="status" :class="runStatusClass(r.status)"><span class="dot"></span>{{ runLabel[r.status]||r.status }}</span>
+                <span class="status" :class="runStatusClass(r.status)"><span class="dot"></span>{{ r.status==='success' && agentChildren.has(sel.id) ? '主会话本轮完成' : runLabel[r.status]||r.status }}</span>
                 <span v-if="r.ended_at">{{ dur(r.ended_at-r.started_at) }}</span>
                 <span v-if="r.cost">· ${{ r.cost.toFixed(4) }}</span>
                 <span v-if="runTokens(r.id)">· {{ runTokens(r.id) }}</span>
@@ -476,11 +455,15 @@
         </div>
       </div>
     </form>
+    <div v-else-if="sel.agent_id" class="composer agent-composer">
+      <span>由 {{ engLabel(sel.engine) }} 的主会话管理</span>
+      <button v-if="sel.parent_task_id" type="button" class="btn sm" @click="openTask(sel.parent_task_id)">打开主会话</button>
+    </div>
     <form class="composer reply" v-else @submit.prevent="run" :class="{dropping:fileOver==='reply'}"
       @dragover="onFileOver($event,'reply')" @dragleave="fileOver=''" @drop="onFileDrop($event,replyImgs)">
       <label><span class="sr">回复</span>
-        <textarea ref="replyInput" v-model="followup" rows="1" @input="grow" @paste="onPaste($event,replyImgs)" :disabled="isActive(sel) || !!dependencyLabel(sel)" @keydown.enter="onEnter($event,run)"
-          :placeholder="dependencyLabel(sel) || (isActive(sel) ? engLabel(sel.engine)+' 正在执行…' : sel.session_id ? '回复 '+engLabel(sel.engine)+'…' : sel.runs.length ? '回复 '+engLabel(sel.engine)+'（新会话，会带上之前的对话）…' : '补充说明（可选），↵ 开始执行')"></textarea></label>
+        <textarea ref="replyInput" v-model="followup" rows="1" @input="grow" @paste="onPaste($event,replyImgs)" :disabled="isActive(sel)" @keydown.enter="onEnter($event,run)"
+          :placeholder="(isActive(sel) ? engLabel(sel.engine)+' 正在执行…' : sel.session_id ? '回复 '+engLabel(sel.engine)+'…' : sel.runs.length ? '回复 '+engLabel(sel.engine)+'（新会话，会带上之前的对话）…' : '补充说明（可选），↵ 开始执行')"></textarea></label>
       <div class="atts" v-if="replyImgs.length">
         <div class="att" v-for="(a,i) in replyImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
           <button type="button" class="att-x" @click="removeAtt(replyImgs,i)" :aria-label="'移除图片 '+a.name"><ic n="x" :s="10" :w="2.6"></ic></button></div>
@@ -496,7 +479,7 @@
           <span class="hint" v-if="!isActive(sel) && sel.runs.length && !followup.trim() && !replyImgs.length">空消息 = 重新执行</span>
           <model-picker :t="sel" :disabled="isActive(sel)" @change="patch($event)"></model-picker>
           <button v-if="isActive(sel)" type="button" class="send stop" @click="cancel" aria-label="停止" title="停止"><ic n="stop" :s="11"></ic></button>
-          <button v-else type="submit" class="send" :disabled="!!dependencyLabel(sel)" aria-label="发送" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
+          <button v-else type="submit" class="send" aria-label="发送" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
         </div>
       </div>
     </form>

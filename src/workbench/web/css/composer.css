@@ -33,3 +33,5 @@
 .send:hover{opacity:.86}.send:active{transform:scale(.95)}
 .send:disabled{background:var(--sunk);color:var(--faint);opacity:1}
 .send.stop{background:var(--ink);color:var(--on-ink)}
+
+.agent-composer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;color:var(--text-3);font-size:12px}

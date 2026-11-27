@@ -5,7 +5,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
-from workbench.engines.planning import event_plan
+from workbench.engines.progress import event_plan
 
 
 _CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -299,6 +299,8 @@ def activity_updates(event: dict) -> Iterator[dict]:
         action = event.get("subtype")
         if action == "start":
             yield row("开始执行任务", key="start")
+        elif action == "agent_progress" and event.get("text"):
+            yield row(event["text"], "running", "agent_progress")
         elif action == "approval":
             approval_id = event.get("id")
             kind = event.get("kind", "command")
@@ -334,6 +336,7 @@ def activity_updates(event: dict) -> Iterator[dict]:
             label, state = {
                 "success": ("本轮执行完成", "done"), "error": ("本轮执行失败", "failed"),
                 "cancelled": ("本轮已停止", "interrupted"), "interrupted": ("本轮已中断", "interrupted"),
+                "unreported": ("子会话结果未确认", "warning"),
             }.get(event.get("status"), ("", ""))
             if label:
                 yield row(label, state, "end")

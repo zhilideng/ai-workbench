@@ -69,7 +69,7 @@ class ClaudeEngine(Engine):
 
     def parse_event(self, ev: dict, st: RunState) -> None:
         t = ev.get("type")
-        if t == "system" and ev.get("session_id"):
+        if t == "system" and ev.get("subtype") in (None, "init") and ev.get("session_id"):
             st.sid = ev["session_id"]
         elif t == "result":
             st.result = ev.get("result") or ""

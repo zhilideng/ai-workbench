@@ -8,7 +8,6 @@ import attachments from './features/attachments.js';
 import board from './features/board.js';
 import composer from './features/composer.js';
 import conversation from './features/conversation.js';
-import dispatch from './features/dispatch.js';
 import format from './features/format.js';
 import logs from './features/logs.js';
 import models from './features/models.js';
@@ -19,13 +18,14 @@ import sidebar from './features/sidebar.js';
 import ssh from './features/ssh.js';
 import tasks from './features/tasks.js';
 
+import agentSessions from './components/agent-sessions.js';
 import icon from './components/icon.js';
 import modelPicker from './components/model-picker.js';
 import runActivity from './components/run-activity.js';
 import statusGlyph from './components/status-glyph.js';
 
-const FEATURES = [format, models, projects, tasks, sidebar, board, composer, conversation, dispatch, logs, attachments, preview, ssh, quota];
-const COMPONENTS = {ic: icon, sg: statusGlyph, 'model-picker': modelPicker, 'run-activity': runActivity};
+const FEATURES = [format, models, projects, tasks, sidebar, board, composer, conversation, logs, attachments, preview, ssh, quota];
+const COMPONENTS = {ic: icon, sg: statusGlyph, 'agent-sessions': agentSessions, 'model-picker': modelPicker, 'run-activity': runActivity};
 
 const app = Vue.createApp({
   mixins: FEATURES,
@@ -70,7 +70,6 @@ const app = Vue.createApp({
         if (this.sel){
           const t=this.tasks.find(x=>x.id===this.sel.id);
           if (!t){ this.closeTask(); return; }
-          this.sel.waiting_for=t.waiting_for;
           const changed = t.status!==this.sel.status || t.session_id!==this.sel.session_id;
           if (changed || this.isActive(t)){
             const fresh = await apiq('/api/tasks/'+t.id);

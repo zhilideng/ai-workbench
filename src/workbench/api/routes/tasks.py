@@ -42,8 +42,8 @@ def patch_task(task_id: int, body: TaskPatch):
 
 
 @router.delete("/{task_id}")
-def delete_task(task_id: int, runner: Runner = Depends(get_runner)):
-    return tasks.delete_task(runner, task_id)
+async def delete_task(task_id: int, runner: Runner = Depends(get_runner)):
+    return await tasks.delete_task(runner, task_id)
 
 
 @router.post("/{task_id}/prewarm")

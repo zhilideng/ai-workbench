@@ -59,4 +59,4 @@ export const ICONS = {
 };
 
 // 任务状态 → 信号灯样式（.sti.*）：空心圈 / 旋转 / 琥珀灯 / 绿勾 / 红叉 / 灰叉
-export const GLYPH = {todo:'todo',queued:'run',running:'run',review:'review',done:'done',failed:'fail',cancelled:'cancel'};
+export const GLYPH = {todo:'todo',queued:'run',running:'run',review:'review',done:'done',failed:'fail',cancelled:'cancel',unreported:'review'};

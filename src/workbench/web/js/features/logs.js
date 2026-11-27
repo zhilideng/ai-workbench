@@ -6,7 +6,7 @@ import {relPath} from '../core/paths.js';
 export default {
   data(){ return {
       logs:{}, offsets:{}, workState:{},
-      runLabel:{running:'执行中',success:'成功',error:'出错',cancelled:'已停止',interrupted:'服务重启中断'},
+      runLabel:{running:'执行中',success:'成功',error:'出错',cancelled:'已停止',interrupted:'已中断',unreported:'结果未确认'},
   }; },
   methods:{
     async pullLogs(scroll){
@@ -16,15 +16,17 @@ export default {
       let ended=false;
       try{
         const box=this.$refs.logBox, atBottom = box && box.scrollHeight-box.scrollTop-box.clientHeight<80;
-        for (const r of this.sel.runs){
+        const task=this.sel;
+        for (const r of task.runs){
           if (this.offsets[r.id]==='done') continue;   // 已读完的运行不会再有输出（sel 里的状态可能还没刷新，不能据此重读）
           const off = typeof this.offsets[r.id]==='number' ? this.offsets[r.id] : 0;
           const res = await apiq(`/api/runs/${r.id}/events?offset=${off}`);
+          if (this.sel?.id!==task.id) break;
           const arr = this.logs[r.id] || [];
           res.events.forEach(e=>this.ingest(arr,e));
           this.logs[r.id]=arr;
           if (res.status!=='running'){ arr.forEach(x=>{ if (x.live) x.live=false; }); ended = ended || r.status==='running'; }
-          this.offsets[r.id] = res.status==='running' ? res.offset : 'done';
+          this.offsets[r.id] = ['running','unreported'].includes(res.status) ? res.offset : 'done';
         }
         if (scroll||atBottom) this.$nextTick(()=>{ if(this.$refs.logBox) this.$refs.logBox.scrollTop=1e9; });
       }finally{ this._pulling=false; }
@@ -55,7 +57,8 @@ export default {
           return;
         }
         if (e.subtype==='approval_done'){ const a=arr.find(x=>x.cls==='approval' && x.id===e.id); if (a) a.decision=e.decision; return; }
-        if (e.subtype==='delta') this.appendLive(arr, 'text', e.text);
+        if (e.subtype==='agent_assignment' && e.text) arr.push({cls:'prompt', text:e.text});
+        else if (e.subtype==='delta') this.appendLive(arr, 'text', e.text);
         else if (e.subtype==='thinking_delta') this.appendLive(arr, 'think', e.text, e.item);
         else if (e.subtype==='output_delta'){ const row=arr.find(x=>x.cls==='tool' && x.id===e.item); if (row) row.output=(row.output||'')+e.text; }
         else if (e.subtype==='plan'){   // Codex 的计划 / 待办更新：同一轮只保留最新的一份
@@ -64,8 +67,9 @@ export default {
           if (row){ row.output=text; row.summary=(e.plan||[]).length+' 项'; }
           else arr.push({cls:'tool', id:'__plan', name:'Todo', summary:(e.plan||[]).length+' 项', output:text});
         }
-        else if (e.subtype==='warning') arr.push({cls:'sys', text:'⚠ '+e.text});
-        else if (e.subtype==='start') arr.push({cls:'prompt', text:e.prompt, cwd:e.cwd, meta:this.runMeta(e), images:e.images||[]});
+        else if (e.subtype==='warning') arr.push({cls:'sys', text:'⚠ '+e.text,
+          agentUnreported:e.text==='CLI 事件流已结束，子会话结果未回报'});
+        else if (e.subtype==='start' && e.prompt) arr.push({cls:'prompt', text:e.prompt, cwd:e.cwd, meta:this.runMeta(e), images:e.images||[]});
         else if (e.subtype==='stderr' && e.text.trim()) arr.push({cls:'err', text:e.text});
         else if (e.subtype==='error') arr.push({cls:'err', text:'工作台错误：'+e.text});
         return;
@@ -95,7 +99,7 @@ export default {
       const t=e.type||'';
       if (t==='thread.started'){ arr.push({cls:'sys', text:`Codex 会话 ${e.thread_id}`}); return true; }
       if (t==='turn.started') return true;
-      if (t==='turn.completed'){ arr.push({cls:'result', text:'', tokens:e.usage||{}}); return true; }
+      if (t==='turn.completed'){ arr.push({cls:'result', text:'', tokens:e.usage}); return true; }
       if (t==='turn.failed'){ arr.push({cls:'result err', text:(e.error||{}).message||'执行失败'}); return true; }
       if (t==='error'){ arr.push({cls:'err', text:e.message||JSON.stringify(e)}); return true; }
       if (!t.startsWith('item.')) return false;
@@ -153,6 +157,7 @@ export default {
       const notes=[], seq=[];
       for (const e of a){
         if (e.cls==='prompt') continue;
+        if (e.agentUnreported && r.status!=='unreported') continue;
         if (e.cls==='err' || (e.cls.startsWith('result') && e.cls!=='result')){ if (e.text) notes.push(e); continue; }
         if (e.cls==='result'){
           const last=[...seq].reverse().find(x=>x.cls==='text');
@@ -186,7 +191,7 @@ export default {
       return [e.model||'默认模型', '思考 '+(e.effort ? this.effortLabel(e.effort, eng) : (eng==='codex' && this.codexDefault(e.model) ? this.effortLabel(this.codexDefault(e.model),'codex')+'（默认）' : '默认'))].join(' · ');
     },
     runTokens(runId){ const r=(this.logs[runId]||[]).find(x=>x.tokens); return r ? `${r.tokens.input_tokens} 入 / ${r.tokens.output_tokens} 出 tokens` : ''; },
-    runStatusClass(s){ return {success:'st-done',error:'st-failed',cancelled:'st-cancelled',interrupted:'st-failed',running:'st-running'}[s]||'st-todo'; },
+    runStatusClass(s){ return {success:'st-done',error:'st-failed',cancelled:'st-cancelled',interrupted:'st-failed',running:'st-running',unreported:'st-unreported'}[s]||'st-todo'; },
     toolIcon(n){ n=(n||'').toLowerCase();
       if (n==='bash') return 'terminal';
       if (n==='grep'||n==='glob') return 'search';

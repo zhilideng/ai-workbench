@@ -14,31 +14,19 @@ export default {
         todo:{label:'待办',items:[]},
         recent:{label:'最近',items:[]},
       };
-      const members=new Map();
-      for (const t of this.tasks){
-        if (!t.parallel_group_id) continue;
-        if (!members.has(t.parallel_group_id)) members.set(t.parallel_group_id,[]);
-        members.get(t.parallel_group_id).push(t);
-      }
       const visible=new Set(this.filteredTasks.map(t=>t.id));
-      for (const t of this.filteredTasks){
-        if (this.parallelById.has(t.parallel_group_id)) continue;
-        const key=this.isActive(t) ? 'active' : t.status==='todo' || t.status==='review' ? t.status : 'recent';
-        categories[key].items.push(t);
-      }
-      const query=this.tq.trim().toLowerCase();
-      for (const group of this.dispatchGroups){
-        if (this.cur && group.project!==this.cur) continue;
-        const all=members.get(group.id) || [];
-        const matchesGroup=query && [group.title,group.prompt,String(group.id)].some(value=>value?.toLowerCase().includes(query));
-        const children=all.filter(t=>matchesGroup || visible.has(t.id)).sort((a,b)=>a.parallel_position-b.parallel_position || a.id-b.id);
-        if (!children.length && (group.state==='ready' || (query && !matchesGroup))) continue;
-        const key=group.state!=='ready' || all.some(this.isActive) ? 'active'
-          : all.some(t=>t.status==='todo') ? 'todo' : all.some(t=>t.status==='review') ? 'review' : 'recent';
-        const completed=all.filter(t=>t.status==='review' || t.status==='done').length;
-        const progress=all.length ? Math.round(100*completed/all.length) : 0;
-        const updated_at=all.reduce((latest,t)=>Math.max(latest,t.updated_at||0),group.updated_at||0);
-        categories[key].items.push({id:group.id,group,children,completed,total:all.length,progress,updated_at});
+      for (const t of this.tasks){
+        if (this.cur && t.project!==this.cur) continue;
+        const children=this.agentChildren.get(t.id) || [];
+        if (t.parent_task_id && this.tasksById.has(t.parent_task_id)) continue;
+        const matching=visible.has(t.id) ? children : children.filter(child=>visible.has(child.id));
+        if (!visible.has(t.id) && !matching.length) continue;
+        const key=this.isActive(t) || (t.status!=='done' && children.some(this.isActive)) ? 'active'
+          : t.status==='todo' || t.status==='review' ? t.status : 'recent';
+        const total=children.length;
+        const completed=children.filter(child=>['review','done'].includes(this.displayTaskStatus(child))).length;
+        const overall=total ? {completed, total, percent:Math.round(100*completed/total)} : null;
+        categories[key].items.push({...t, children:matching, overall});
       }
       return Object.entries(categories).filter(([,category])=>category.items.length).map(([key,category])=>({
         key,...category,

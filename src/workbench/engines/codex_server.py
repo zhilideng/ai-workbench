@@ -21,6 +21,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from workbench.core.shell import child_env, find_bin
+from workbench.engines.agents import codex_agents
 from workbench.engines.base import ServerUnavailable, TurnHandle
 
 log = logging.getLogger("workbench.prewarm")   # 预热过程写进应用日志，排查「为什么慢」用
@@ -94,6 +95,30 @@ def convert_item(item: dict) -> Optional[dict]:
     return {"id": iid, "type": "other", "item_type": t, "raw": item}
 
 
+def child_notification(method: str, params: dict) -> tuple[dict | None, str]:
+    """子会话事件使用和主会话相同的日志格式，保留 CLI 报告的轮次和输出。"""
+    if method == "turn/started":
+        return {"type": "turn.started"}, ""
+    if method == "turn/completed":
+        turn = params.get("turn") or {}
+        if turn.get("status") == "completed":
+            return {"type": "turn.completed"}, ""
+        return {"type": "turn.failed", "error": turn.get("error") or {},
+                "interrupted": turn.get("status") == "interrupted"}, ""
+    if method in ("item/started", "item/completed", "item/updated"):
+        item = params.get("item") or {}
+        if item.get("type") == "userMessage":
+            prompt = "\n".join(c.get("text") or "" for c in item.get("content") or [] if c.get("type") == "text")
+            return {"type": "agent_assignment"}, prompt
+        converted = convert_item(item)
+        return ({"type": method.replace("/", "."), "item": converted} if converted else None), ""
+    subtype = {"item/agentMessage/delta": "delta", "item/reasoning/summaryTextDelta": "thinking_delta",
+               "item/reasoning/textDelta": "thinking_delta", "item/commandExecution/outputDelta": "output_delta"}.get(method)
+    if subtype and params.get("delta"):
+        return {"type": "wb", "subtype": subtype, "text": params["delta"], "item": params.get("itemId")}, ""
+    return None, ""
+
+
 def _usage(tu: dict) -> dict:
     last = (tu or {}).get("last") or {}
     return {"input_tokens": last.get("inputTokens", 0), "cached_input_tokens": last.get("cachedInputTokens", 0),
@@ -114,6 +139,8 @@ class CodexServer:
         self.spare_since: dict[str, float] = {}            # 设置的键 -> 开始预建的时间（日志用）
         self.resuming: dict[str, asyncio.Task] = {}        # threadId -> 正在后台恢复
         self.queues: dict[str, asyncio.Queue] = {}         # threadId -> 该会话当前轮次的消息
+        self.agent_roots: dict[str, str] = {}            # CLI 子会话的 threadId -> 主会话的 threadId
+        self.active_agents: set[str] = set()             # 主轮次结束后仍可能有子会话在执行
         self.early_mcp: dict[str, list[dict]] = {}         # thread/start 返回到轮次队列建立之间的连接状态
         self.pending: dict[int, asyncio.Future] = {}
         self.next_id = 0
@@ -140,6 +167,8 @@ class CodexServer:
             except OSError as e:
                 raise ServerUnavailable(f"无法启动 codex app-server：{e}") from e
             self.loaded.clear()
+            self.agent_roots.clear()
+            self.active_agents.clear()
             self.session_loads = 0
             asyncio.create_task(self._read(self.proc))
             try:
@@ -171,7 +200,7 @@ class CodexServer:
         if self.idle:
             self.idle.cancel()
             self.idle = None
-        if not self.queues and not self.opening_turns and self.alive:
+        if not self.queues and not self.active_agents and not self.opening_turns and self.alive:
             proc = self.proc
             delay = RECYCLE_SECONDS if self.session_loads >= SESSION_LOAD_LIMIT else IDLE_SECONDS
             self.idle = asyncio.get_running_loop().call_later(
@@ -179,7 +208,7 @@ class CodexServer:
 
     async def _close_when_idle(self, proc: asyncio.subprocess.Process) -> None:
         async with self.lock:
-            if self.proc is not proc or self.queues or self.opening_turns:
+            if self.proc is not proc or self.queues or self.active_agents or self.opening_turns:
                 return
             if self.pending:
                 self._touch()
@@ -229,10 +258,21 @@ class CodexServer:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if "method" in msg and "id" in msg:   # 服务端请求：审批转给对应会话的轮次，其余直接拒绝
-                q = self.queues.get((msg.get("params") or {}).get("threadId"))
-                if msg["method"] in APPROVALS and q:
-                    q.put_nowait(msg)
+            method, params = msg.get("method"), msg.get("params") or {}
+            thread_id = params.get("threadId")
+            root = self.agent_roots.get(thread_id, thread_id)
+            if root != thread_id:
+                if method == "turn/started":
+                    self.active_agents.add(thread_id)
+                    self._touch()
+                elif thread_id in self.active_agents and (method == "turn/completed" or (
+                        method == "thread/status/changed" and (params.get("status") or {}).get("type") != "active")):
+                    self.active_agents.discard(thread_id)
+                    self._touch()
+            queue = self.queues.get(root)
+            if method and "id" in msg:
+                if method in APPROVALS and queue:
+                    queue.put_nowait(msg)
                 else:
                     self.respond(msg["id"], error="工作台不支持这类请求")
             elif "id" in msg:
@@ -242,13 +282,15 @@ class CodexServer:
                         fut.set_exception(RuntimeError((msg["error"] or {}).get("message") or str(msg["error"])))
                     else:
                         fut.set_result(msg.get("result"))
-            else:
-                thread_id = (msg.get("params") or {}).get("threadId")
-                q = self.queues.get(thread_id)
-                if q:
-                    q.put_nowait(msg)
-                elif thread_id and self.opening_turns and msg.get("method") == MCP_STARTUP:
-                    self.early_mcp.setdefault(thread_id, []).append(msg)
+            elif queue:
+                if method in ("item/started", "item/completed", "item/updated"):
+                    event = {"type": method.replace("/", "."), "item": params.get("item") or {}}
+                    for agent in codex_agents(event):
+                        if not agent.known_only and agent.id != root:
+                            self.agent_roots[agent.id] = root
+                queue.put_nowait(msg)
+            elif thread_id and self.opening_turns and method == MCP_STARTUP:
+                self.early_mcp.setdefault(thread_id, []).append(msg)
         if self.proc is not None and self.proc is not proc:
             return
         # 进程退出：唤醒该进程的等待者
@@ -413,7 +455,9 @@ class CodexServer:
             while True:
                 msg = await q.get()
                 m, p = msg.get("method"), msg.get("params") or {}
-                if p.get("turnId") and turn_id and p["turnId"] != turn_id:
+                child_id = p.get("threadId")
+                is_child = child_id and child_id != tid
+                if not is_child and p.get("turnId") and turn_id and p["turnId"] != turn_id:
                     if "id" in msg:   # 上一轮遗留的审批请求：拒绝
                         self.respond(msg["id"], {"decision": "decline"})
                     continue
@@ -433,6 +477,11 @@ class CodexServer:
                     if aid is not None:
                         del approvals[aid]
                         yield _line({"type": "wb", "subtype": "approval_done", "id": aid, "decision": "expired"})
+                elif is_child:
+                    child_event, assignment = child_notification(m, p)
+                    if child_event:
+                        yield _line({"type": "wb", "subtype": "agent_event", "agent_id": child_id, "event": child_event,
+                                     "turn_id": p.get("turnId") or (p.get("turn") or {}).get("id"), "prompt": assignment})
                 elif m == "turn/started":
                     yield _line({"type": "turn.started"})
                 elif m == "item/agentMessage/delta" and p.get("delta"):

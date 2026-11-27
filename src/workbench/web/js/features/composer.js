@@ -3,7 +3,7 @@ import {api, apiq} from '../core/api.js';
 
 export default {
   data(){ return {
-      draftImgs:[], submitting:false, draftRequest:null,
+      draftImgs:[], submitting:false,
       draft:{prompt:'', engine:['claude','codex'].includes(localStorage.getItem('wb.engine')) ? localStorage.getItem('wb.engine') : 'claude', permission_mode:'acceptEdits', model:'', effort:localStorage.getItem('wb.effort')||'', use_worktree:false, ssh_id:0},
   }; },
   computed:{
@@ -49,16 +49,7 @@ export default {
         engine:d.engine, run_now:runNow, source_path:this.executionSource?.path || '', images:this.draftImgs.map(a=>a.path)};
       this.submitting=true;
       try{
-        let result;
-        if (runNow){
-          const fingerprint=JSON.stringify(body);
-          if (this.draftRequest?.fingerprint!==fingerprint)
-            this.draftRequest={fingerprint,id:crypto.randomUUID()};
-          result=await api('/api/dispatch',{method:'POST',body:{...body,request_id:this.draftRequest.id}});
-        }else{
-          await api('/api/tasks',{method:'POST',body});
-        }
-        this.draftRequest=null;
+        const task=await api('/api/tasks',{method:'POST',body});
         if (d.prompt===body.prompt){
           d.prompt='';
           for (let i=this.draftImgs.length-1;i>=0;i--){
@@ -66,12 +57,8 @@ export default {
           }
           this.$nextTick(()=>this.grow(this.$refs.promptInput));
         }
-        if (result?.group && this.cur===body.project && !this.sel){
-          this.tq='';
-          this.showDispatchGroup(result.group);
-        }
         this.refreshTasks().catch(()=>{});
-        if (result?.task && this.cur===body.project && !this.sel) await this.openTask(result.task.id);
+        if (runNow && this.cur===body.project && !this.sel) await this.openTask(task.id);
       }finally{
         this.submitting=false;
       }
