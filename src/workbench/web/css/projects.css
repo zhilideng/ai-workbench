@@ -1,14 +1,10 @@
 /* 项目入口、源文件夹浮层与弹窗 */
-.app{grid-template-columns:248px minmax(0,1fr)}
-.psw{margin:0 13px 8px}
-.psw-btn{height:34px;gap:8px;background:var(--run-soft);box-shadow:none}
-.psw-btn:hover,.psw.open .psw-btn{box-shadow:inset 0 0 0 1px var(--focus-ring)}
 .project-badge{display:inline-flex;align-items:center;gap:4px;flex:none;max-width:128px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;padding:0 6px;background:var(--sunk);color:var(--text-3);font-size:10.5px;font-weight:600;line-height:17px}
 .psw-btn .project-badge{background:var(--panel);max-width:72px}
-.project-new{display:flex;align-items:center;justify-content:center;gap:8px;min-height:34px;margin:0 13px 9px;padding:0 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);font-size:14px;font-weight:600}
-.project-new:hover{border-color:var(--focus);background:var(--run-soft)}
+.project-new{display:flex;align-items:center;justify-content:center;gap:8px;min-height:36px;margin:0 var(--side-gutter) 10px;padding:0 8px;border:0;border-radius:11px;background:var(--accent-fill);color:#fff;font-size:14px;font-weight:650;box-shadow:0 3px 9px var(--run-track)}
+.project-new:hover{filter:brightness(1.08)}
 .project-new:focus-visible{outline-offset:0}
-.source-menu-button{display:flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--focus);border-radius:7px;background:var(--run-soft);color:var(--text);font-size:13px;font-weight:600;white-space:nowrap}
+.source-menu-button{display:flex;align-items:center;justify-content:center;gap:7px;height:34px;padding:0 11px;border:1px solid var(--dock-line);border-radius:11px;background:var(--run-soft);color:var(--text);font-size:13px;font-weight:650;white-space:nowrap}
 .source-menu-button svg:last-child{margin-left:4px;color:var(--focus)}
 .source-menu-button:hover{box-shadow:0 0 0 2px var(--focus-ring)}
 .project-sources{position:relative;margin-right:10px}

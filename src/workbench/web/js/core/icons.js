@@ -1,6 +1,6 @@
 // 线性图标（stroke），与设计稿一致
 export const ICONS = {
-  logo:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  logo:'<path d="M10 3c.8 5.4 2.6 7.2 8 8-5.4.8-7.2 2.6-8 8-.8-5.4-2.6-7.2-8-8 5.4-.8 7.2-2.6 8-8ZM18 3v5m-2.5-2.5h5M19 14v5m-2.5-2.5h5"/>',
   minus:'<path d="M5 12h14"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
@@ -28,10 +28,12 @@ export const ICONS = {
   check:'<path d="m5 12 5 5L20 7"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>',
   retry:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   up:'<path d="M12 19V5M5 12l7-7 7 7"/>',
+  send:'<path fill="currentColor" stroke="none" d="M2.8 3.3a1 1 0 0 1 1.3-.2l17 8a1 1 0 0 1 0 1.8l-17 8a1 1 0 0 1-1.4-1.2l2.5-6.2 8.4-1.5-8.4-1.5-2.5-6.2a1 1 0 0 1 .1-1Z"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" stroke="none"/>',
   play:'<path d="M7 5v14l12-7z" fill="currentColor" stroke="none"/>',
   clock:'<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2"/>',
   todo:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12h6"/>',
+  checklist:'<path d="m3 6 2 2 4-4m-6 12 2 2 4-4m4-8h8m-8 10h8"/>',
   review:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   done:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   fail:'<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',

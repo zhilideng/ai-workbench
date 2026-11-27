@@ -27,11 +27,15 @@
   <div class="scrim" :class="{on:sideOpen}" @click="sideOpen=false"></div>
   <!-- ============ 侧边栏：项目切换 + 任务列表 ============ -->
   <aside aria-label="任务" :class="{open:sideOpen}">
+    <div class="side-brand">
+      <div class="logo"><ic n="logo" :s="23"></ic></div>
+      <div class="brand-t">AI 工作台<small>多对话 · 多任务 · 协作</small></div>
+    </div>
     <div class="side-top">
-      <div class="logo"><ic n="logo" :s="13"></ic></div>
-      <span class="brand-t">工作台</span>
-      <button class="ibtn" v-if="curProject" @click="openSsh" title="SSH 连接" aria-label="SSH 连接"><ic n="server" :s="15"></ic></button>
-      <button class="ibtn" @click="newTask" title="新任务（⌘N）" aria-label="新任务"><ic n="compose" :s="15"></ic></button>
+      <button type="button" class="workspace-nav" :aria-current="!sel ? 'page' : null"
+        @click="closeTask();sideOpen=false"><ic n="grid" :s="17"></ic>工作台</button>
+      <button type="button" class="ibtn" v-if="curProject" @click="openSsh" title="SSH 连接" aria-label="SSH 连接"><ic n="server" :s="17"></ic></button>
+      <button type="button" class="ibtn" @click="newTask" title="新任务（⌘N）" aria-label="新任务"><ic n="compose" :s="17"></ic></button>
     </div>
     <div class="psw" :class="{open:pswOpen}" ref="psw">
       <button type="button" class="psw-btn" @click="togglePsw" :aria-expanded="pswOpen" aria-haspopup="listbox" title="切换项目（⌘K）">
@@ -59,11 +63,11 @@
       </div>
     </div>
     <button type="button" class="project-new" @click="openProjectEditor(false,$event.currentTarget)"><ic n="plus" :s="16"></ic>新建项目</button>
-    <label class="side-search"><ic n="search" :s="13"></ic>
+    <label class="side-search"><ic n="search" :s="16"></ic>
       <input type="search" v-model="tq" aria-label="搜索任务" placeholder="搜索任务"></label>
 
     <nav class="threads" aria-label="任务列表">
-      <div v-for="g in sideGroups" :key="g.key" class="tgrp" :class="{closed:sideClosed[g.key]}">
+      <div v-for="g in sideGroups" :key="g.key" class="tgrp" :data-group="g.key" :class="{closed:sideClosed[g.key]}">
         <button type="button" class="tgrp-h" @click="toggleGroup(g.key)" :aria-expanded="!sideClosed[g.key]">{{ g.label }}<span class="n">{{ g.items.length }}</span><ic class="chev" n="chevd" :s="12"></ic></button>
         <template v-if="!sideClosed[g.key]">
           <template v-for="t in g.items.slice(0, g.limit)" :key="t.id">
@@ -162,13 +166,14 @@
   <main>
     <!-- ---- 看板 / 列表 ---- -->
     <template v-if="!sel">
-      <header class="topbar">
+      <header class="topbar board-topbar">
         <button class="ibtn only-m" @click="sideOpen=true" aria-label="打开侧边栏"><ic n="menu" :s="16"></ic></button>
         <div class="crumb">
-          <span class="cur">{{ cur || '全部项目' }}</span>
+          <div class="board-title"><ic :n="cur ? 'folder' : 'grid'" :s="19"></ic>
+            <h1 class="cur" :title="cur || '全部项目'">{{ cur || '全部项目' }}</h1></div>
           <span class="meta chips" v-if="curProject">
             <template v-if="activeSource">
-              <span class="chip" :title="activeSource.path"><ic n="folder" :s="12"></ic>{{ sourceDisplay(activeSource) }}</span>
+              <span class="chip" :title="activeSource.path"><ic n="folder" :s="14"></ic><span class="ell">{{ sourceDisplay(activeSource) }}</span></span>
               <span class="chip" v-if="activeSource.ssh_id"><ic n="server" :s="12"></ic>{{ sourceLabel(activeSource) }}</span>
               <span class="chip mono" v-else-if="activeSource.is_git"><ic n="branch" :s="12"></ic>{{ activeSource.branch }}</span>
               <span class="chip" v-else><ic n="branch" :s="12"></ic>非 git 仓库</span>
@@ -209,19 +214,19 @@
       <div class="content">
       <div class="board-wrap kanban" v-if="view==='board'">
         <div class="board">
-          <section class="col" v-for="c in columns" :key="c.key" :aria-label="c.label" :class="{drop:dropCol===c.key, can:dragTask && dropCol!==c.key && !!dropTarget(dragTask,c)}"
+          <section class="col" v-for="c in columns" :key="c.key" :aria-label="c.label" :data-status="c.key" :class="{drop:dropCol===c.key, can:dragTask && dropCol!==c.key && !!dropTarget(dragTask,c)}"
             @dragover="onDragOver($event,c)" @dragleave="onDragLeave($event,c)" @drop.prevent="onDrop(c)">
             <div class="col-h">
-              <sg :s="c.glyph" :idle="!colTasks(c).length"></sg><h2>{{ c.label }}</h2><span class="n">{{ colTasks(c).length }}</span>
+              <span class="col-icon"><ic :n="c.icon" :s="15"></ic></span><h2>{{ c.label }}</h2><span class="n">{{ colTasks(c).length }}</span>
               <button v-if="c.key==='todo'" class="add" aria-label="新建任务" title="新建任务（⌘N）" @click="newTask"><ic n="plus" :s="13"></ic></button>
-              <span v-if="c.rail" class="rail" aria-hidden="true"></span>
             </div>
             <div class="col-body">
             <article v-for="t in colVisible(c)" :key="t.id" class="card" :class="{dragging:dragId===t.id, live:t.status==='running'}" @click="openTask(t.id)" tabindex="0" @keydown.enter="openTask(t.id)"
               :draggable="canDragTask(t)" @dragstart="onDragStart($event,t)" @dragend="dragId=null;dropCol=''">
               <div class="card-top">
                 <span class="eng"><ic :n="t.engine==='codex'?'terminal':'spark'" :s="12"></ic>{{ engLabel(t.engine) }}</span>
-                <span class="tid">#{{ t.id }}</span><span class="time">{{ ago(t.updated_at) }}</span>
+                <span class="tid">#{{ t.id }}</span><span class="time" :title="fmtTime(t.updated_at)">
+                  <span class="time-long">{{ ago(t.updated_at) }}</span><span class="time-short">{{ agoShort(t.updated_at) }}</span></span>
                 <button v-if="canDeleteTask(t)" type="button" class="card-del" @click.stop="delTask(t)" @keydown.enter.stop aria-label="删除任务" title="删除任务"><ic n="trash" :s="13"></ic></button>
               </div>
               <h3>{{ t.title }}</h3>
@@ -253,7 +258,8 @@
               </div>
             </article>
             <div v-if="!colTasks(c).length" class="empty">
-              <b>{{ c.empty }}</b><span v-if="c.emptyHint">{{ c.emptyHint }}</span>
+              <div class="empty-art" aria-hidden="true"><div class="empty-symbol"><ic :n="c.emptyIcon || c.icon" :s="32"></ic></div></div>
+              <b>{{ c.empty }}</b><p v-if="c.emptyHint">{{ c.emptyHint }}</p>
             </div>
             <button v-if="colTasks(c).length > colLimit(c)" class="more" @click="showMore(c)">
               <ic n="chevd" :s="12"></ic>显示更多（还有 {{ colTasks(c).length - colLimit(c) }} 条）</button>
@@ -418,11 +424,11 @@
     </template>
 
     <!-- ---- 输入框 ---- -->
-    <div class="composer-wrap">
-    <form class="composer" v-if="!sel" @submit.prevent="submit(true)" :class="{dropping:fileOver==='draft'}"
+    <div class="composer-wrap" :class="{'board-dock':!sel}">
+    <form class="composer draft-composer" v-if="!sel" @submit.prevent="submit(true)" :class="{dropping:fileOver==='draft'}"
       @dragover="onFileOver($event,'draft')" @dragleave="fileOver=''" @drop="onFileDrop($event,draftImgs)">
-      <label><span class="sr">任务描述</span>
-        <textarea ref="promptInput" v-model="draft.prompt" rows="2" @input="grow" @focus="prewarmDraft" @paste="onPaste($event,draftImgs)" @keydown.enter="onEnter($event,()=>submit(true))"
+      <label class="draft-field"><span class="sr">任务描述</span><span class="draft-mark"><ic n="logo" :s="18"></ic></span>
+        <textarea ref="promptInput" v-model="draft.prompt" rows="1" @input="grow" @focus="prewarmDraft" @paste="onPaste($event,draftImgs)" @keydown.enter="onEnter($event,()=>submit(true))"
           :disabled="!cur" :placeholder="!cur ? '先在左上角选择一个项目，再描述要做的事…' : draft.ssh_id>0 ? `让服务器 ${(selSsh||{}).name||''} 上的 ${engLabel(draft.engine)} 做点什么…` : `让 ${engLabel(draft.engine)} 在 ${cur} 里做点什么…`"></textarea></label>
       <div class="atts" v-if="draftImgs.length">
         <div class="att" v-for="(a,i) in draftImgs" :key="a.key" :class="{busy:!a.path}"><img :src="a.preview" :alt="a.name">
@@ -451,7 +457,7 @@
           <model-picker :t="draft" can-engine></model-picker>
           <span class="vsep"></span>
           <button type="button" class="btn ghost sm" @click="submit(false)" :disabled="!canSend" title="只保存，不执行">存为待办</button>
-          <button type="submit" class="send" :disabled="!canSend" aria-label="发送任务" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
+          <button type="submit" class="send" :disabled="!canSend" aria-label="发送任务" title="发送（↵）"><ic n="send" :s="20"></ic></button>
         </div>
       </div>
     </form>
@@ -479,7 +485,7 @@
           <span class="hint" v-if="!isActive(sel) && sel.runs.length && !followup.trim() && !replyImgs.length">空消息 = 重新执行</span>
           <model-picker :t="sel" :disabled="isActive(sel)" @change="patch($event)"></model-picker>
           <button v-if="isActive(sel)" type="button" class="send stop" @click="cancel" aria-label="停止" title="停止"><ic n="stop" :s="11"></ic></button>
-          <button v-else type="submit" class="send" aria-label="发送" title="发送（↵）"><ic n="up" :s="15" :w="2.4"></ic></button>
+          <button v-else type="submit" class="send" aria-label="发送" title="发送（↵）"><ic n="send" :s="17"></ic></button>
         </div>
       </div>
     </form>

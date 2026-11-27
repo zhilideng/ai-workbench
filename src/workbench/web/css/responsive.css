@@ -1,6 +1,17 @@
 /* 窄窗口：侧边栏改为抽屉 */
 /* ---------- 移动端：侧边栏改为抽屉 ---------- */
 .scrim{display:none}
+@media (max-width:1180px){
+  .draft-composer{max-width:100%}
+  .board-topbar .meta .chip:not(:first-child){display:none}
+}
+@media (min-width:861px) and (max-width:1210px){
+  .card-top .time-long{display:none}
+  .card-top .time-short{display:inline}
+}
+@media (max-height:700px){
+  .quota-body{max-height:32vh}
+}
 @media (max-width:860px){
   .app{grid-template-columns:1fr}
   aside{position:fixed;inset:0 auto 0 0;width:min(300px,86vw);z-index:60;transform:translateX(-100%);transition:transform .2s ease;box-shadow:var(--sh-pop)}
@@ -8,16 +19,25 @@
   .scrim.on{display:block;position:fixed;inset:0;z-index:55;background:rgba(0,0,0,.35)}
   .only-m{display:inline-flex}
   .topbar{padding:0 10px;height:52px}
-  .crumb .meta,.hide-m{display:none}
+  .board-title{max-width:100%}
+  .crumb .meta,.board-topbar .crumb .meta,.hide-m{display:none}
   .content{padding:14px 12px 0}
   .chat{padding:0 12px}
-  .composer-wrap{padding:10px}
+  .composer-wrap,.board-dock{padding:10px}
   .csend .hint{display:none}
   .ctl select{max-width:120px}
   /* 手机上看板一列一屏，左右滑动时按列吸附，露出下一列的边 */
-  .board{grid-template-columns:repeat(5,calc(100vw - 60px));min-width:0}
-  .board-wrap.kanban{scroll-snap-type:x mandatory;scroll-padding-inline:10px}
+  .board{grid-template-columns:repeat(5,calc(100vw - 60px));padding-inline:12px}
+  .board-wrap.kanban{margin-inline:-12px;scroll-snap-type:x mandatory;scroll-padding-inline:12px}
   .col{scroll-snap-align:start}
-  .cbar{flex-wrap:wrap;row-gap:4px}
   .cgrp{flex:1 1 100%}
+}
+@media (max-width:430px){
+  .board-title{gap:4px}
+  .board-title>svg{display:none}
+  .topbar,.topbar .actions{gap:5px}
+  .seg button,.source-menu-button{padding-inline:7px}
+  .draft-composer{padding-inline:10px}
+  .draft-composer .send{width:42px}
+  .draft-composer .vsep{margin-inline:1px}
 }

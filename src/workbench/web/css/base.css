@@ -1,44 +1,42 @@
-/* 设计令牌（明暗两套配色）、基础样式、状态信号灯 */
-/* ==========================================================================
-   设计：调度台
-   · 界面本身是安静的石墨灰；颜色只用来表示任务状态（信号灯）
-   · 看板列头连成一条流水线：待办 → 执行中 → 待验收 → 已完成，失败 / 取消在旁路
-   · 主要操作用墨色；卡片上的动作在悬停时预示卡片会去往哪一列
-   ========================================================================== */
+/* 明暗配色、基础样式、状态信号灯 */
 :root{
-  --bg:#F4F5F7; --side:#ECEEF1; --panel:#FFFFFF; --field:#FFFFFF; --sunk:#EEF0F3; --bubble:#EBEDF1;
-  --hover:rgba(28,32,38,.055); --press:rgba(28,32,38,.09);
-  --line:#E2E5EA; --line-2:#E7E9ED; --line-3:#EEF0F3; --line-strong:#D2D7DE; --dash:#CDD2D9; --rail:#CBD0D8;
-  --ink:#1C2026; --on-ink:#FFFFFF;
-  --text:#1C2026; --text-2:#30353D; --text-3:#555C66; --muted:#7A818B; --faint:#A0A6AF;
-  --idle:#A0A6AF;
-  --run:#2F6FEB; --run-track:rgba(47,111,235,.2); --run-soft:#EAF1FE; --run-ink:#1F57C8;
-  --review:#E58A00; --review-soft:#FDF3E2; --review-ink:#975A00; --review-halo:rgba(229,138,0,.2);
-  --done:#1F9D5C; --done-soft:#E6F5ED; --done-ink:#157548;
-  --fail:#E5484D; --fail-soft:#FDEDED; --fail-ink:#C1363C;
-  --focus:#2F6FEB; --focus-ring:rgba(47,111,235,.2); --ring:rgba(28,32,38,.07);
+  --bg:#F3F3FC; --side:#F0F0FB; --panel:#FEFEFF; --field:#FFFFFF; --sunk:#EBEAF7; --bubble:#EBE8FC;
+  --hover:rgba(84,65,144,.07); --press:rgba(84,65,144,.12);
+  --line:#DFE0EF; --line-2:#E6E6F2; --line-3:#EEEEF6; --line-strong:#C8C7E4; --dash:#C2C2DC;
+  --ink:#2B2C42; --on-ink:#FFFFFF;
+  --text:#17182B; --text-2:#30334E; --text-3:#484F70; --muted:#626A89; --faint:#7C839F;
+  --idle:#858CA9; --todo-badge:#535C84;
+  --run:#6946F6; --run-track:rgba(105,70,246,.22); --run-soft:#EAE6FD; --run-ink:#532ED7;
+  --review:#D97804; --review-soft:#FFF0DA; --review-ink:#8E500A; --review-halo:rgba(231,137,32,.2);
+  --done:#258C50; --done-soft:#E4F4EC; --done-ink:#12693B;
+  --fail:#DC3D58; --fail-soft:#FCE5EE; --fail-ink:#A72949;
+  --focus:#6D48F5; --focus-ring:rgba(109,72,245,.19); --ring:rgba(109,72,245,.09);
+  --accent-fill:linear-gradient(132deg,#7948F4,#4D28E9);
+  --accent-tint:#E2D9FC; --dock-line:#CEC2FD; --sky:#F1ECFB;
+  --wave:#E8DFFA; --wave-soft:#EAE9FA;
   --code:#1C2026; --code-ink:#E6E8EB;
-  --sh-card:0 1px 2px rgba(20,24,31,.05);
-  --sh-lift:0 10px 22px -10px rgba(20,24,31,.2),0 1px 2px rgba(20,24,31,.05);
-  --sh-dock:0 16px 40px -18px rgba(20,24,31,.28),0 2px 6px -2px rgba(20,24,31,.06);
-  --sh-pop:0 22px 50px -14px rgba(20,24,31,.28),0 2px 6px rgba(20,24,31,.06);
-  --sans:'IBM Plex Sans','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',system-ui,sans-serif;
+  --sh-card:0 3px 11px rgba(62,48,117,.07);
+  --sh-lift:0 10px 24px -9px rgba(62,48,117,.23),0 2px 6px rgba(62,48,117,.07);
+  --sh-dock:0 14px 36px -15px rgba(94,63,181,.27),0 2px 9px rgba(94,63,181,.07);
+  --sh-pop:0 22px 50px -14px rgba(52,36,110,.28),0 2px 6px rgba(52,36,110,.06);
+  --sans:system-ui,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --gut:20px;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#131519; --side:#0E1013; --panel:#1B1E23; --field:#1B1E23; --sunk:#23272D; --bubble:#262A31;
+  --bg:#171623; --side:#1C1A2A; --panel:#242233; --field:#242233; --sunk:#302C44; --bubble:#32294A;
   --hover:rgba(236,238,241,.06); --press:rgba(236,238,241,.1);
-  --line:#2A2E35; --line-2:#262A30; --line-3:#22262B; --line-strong:#3A3F48; --dash:#3A3F48; --rail:#3A3F48;
+  --line:#38344C; --line-2:#332F46; --line-3:#2D2A3E; --line-strong:#514865; --dash:#514865;
   --ink:#ECEEF1; --on-ink:#16181C;
-  --text:#ECEEF1; --text-2:#D3D7DD; --text-3:#A3A9B2; --muted:#7E858F; --faint:#60666F;
-  --idle:#6A707A;
-  --run:#5B93FF; --run-track:rgba(91,147,255,.25); --run-soft:#172540; --run-ink:#A3C3FF;
-  --review:#F5A524; --review-soft:#2D2414; --review-ink:#FFCF7D; --review-halo:rgba(245,165,36,.22);
-  --done:#3DBE78; --done-soft:#142B1F; --done-ink:#93E2B6;
-  --fail:#FF6369; --fail-soft:#311A1C; --fail-ink:#FFA3A6;
-  --focus:#5B93FF; --focus-ring:rgba(91,147,255,.3); --ring:rgba(236,238,241,.08);
+  --text:#F2F0FB; --text-2:#DFD9F3; --text-3:#BBB3D4; --muted:#A39ABB; --faint:#8A829F;
+  --idle:#8982A1; --todo-badge:#635981;
+  --run:#9B7FFF; --run-track:rgba(155,127,255,.26); --run-soft:#2D2451; --run-ink:#C9B8FF;
+  --review:#EF9D48; --review-soft:#3A2B20; --review-ink:#FFCF93; --review-halo:rgba(245,165,36,.22);
+  --done:#52C780; --done-soft:#1C362D; --done-ink:#93E2B6;
+  --fail:#F97691; --fail-soft:#3C2336; --fail-ink:#FFA9B9;
+  --focus:#A38AFF; --focus-ring:rgba(163,138,255,.26); --ring:rgba(163,138,255,.10);
+  --accent-tint:#423064; --dock-line:#504178; --sky:#211B33;
+  --wave:#28203F; --wave-soft:#211C34;
   --code:#0E1013; --code-ink:#D9DCE1;
   --sh-card:0 1px 2px rgba(0,0,0,.35);
   --sh-lift:0 12px 26px -12px rgba(0,0,0,.75),0 1px 2px rgba(0,0,0,.4);
@@ -65,10 +63,14 @@ a{color:var(--run-ink);text-underline-offset:2px}a:hover{color:var(--run)}
 ::-webkit-scrollbar-thumb{background:var(--dash);border-radius:6px;border:3px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background-color:var(--faint)}
 ::-webkit-scrollbar-track{background:transparent}
+:is(.threads,.col-body)::-webkit-scrollbar{width:5px}
+:is(.threads,.col-body)::-webkit-scrollbar-thumb{background:transparent;border:0}
+:is(.threads,.col-body):hover::-webkit-scrollbar-thumb{background:var(--dash)}
+:is(.threads,.col-body):hover::-webkit-scrollbar-thumb:hover{background:var(--faint)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{50%{opacity:.3}}
 
-.app{display:grid;grid-template-columns:268px minmax(0,1fr);height:100vh}
+.app{display:grid;grid-template-columns:clamp(224px,18vw,300px) minmax(0,1fr);height:100vh}
 
 /* ---------- 状态信号灯：侧边栏、看板列头、列表、任务页共用 ---------- */
 .sti{position:relative;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;color:#fff}

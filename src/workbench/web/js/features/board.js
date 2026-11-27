@@ -3,13 +3,12 @@
 export default {
   data(){ return {
       view: localStorage.getItem('wb.view')||'board', colLimits:{}, PAGE:20, dragId:null, dropCol:'',
-      // glyph：列头信号灯；rail：列头之间画流水线（失败 / 取消是旁路，不连线）
       columns:[
-        {key:'todo',label:'待办',s:['todo'],glyph:'todo',rail:true,empty:'暂无待办',emptyHint:'在下方写好任务，点「存为待办」'},
-        {key:'running',label:'执行中',s:['queued','running'],glyph:'run',rail:true,empty:'没有正在运行的任务',emptyHint:'把待办拖到这里即开始执行'},
-        {key:'review',label:'待验收',s:['review'],glyph:'review',rail:true,empty:'没有待验收的任务'},
-        {key:'done',label:'已完成',s:['done'],glyph:'done',empty:'还没有完成的任务'},
-        {key:'failed',label:'异常 / 取消',s:['failed','cancelled','unreported'],glyph:'fail',empty:'没有异常任务'}],
+        {key:'todo',label:'待办',s:['todo'],icon:'todo',emptyIcon:'checklist',empty:'暂无待办',emptyHint:'在下方写好任务，点「存为待办」'},
+        {key:'running',label:'执行中',s:['queued','running'],icon:'play',emptyIcon:'terminal',empty:'没有正在运行的任务',emptyHint:'把待办拖到这里即开始执行'},
+        {key:'review',label:'待验收',s:['review'],icon:'clock',empty:'没有待验收的任务'},
+        {key:'done',label:'已完成',s:['done'],icon:'check',emptyIcon:'done',empty:'还没有完成的任务'},
+        {key:'failed',label:'异常 / 取消',s:['failed','cancelled','unreported'],icon:'x',emptyIcon:'fail',empty:'没有异常任务'}],
   }; },
   computed:{
     boardTasks(){
